@@ -7,6 +7,7 @@
 //
 //-----------------------------------------------------------------------------
 
+#include <stddef.h>
 #include "complexdoom64.h"
 #include "m_random.h"
 #include "con_cvar.h"
@@ -284,7 +285,7 @@ static int ComplexD64_WeightedPick(
     return list[0].type;
 }
 
-int ComplexD64_RandomizeMonster(int type)
+mobjtype_t ComplexD64_RandomizeMonster(int type)
 {
     if (type <= 0 || type >= NUMMOBJTYPES)
         return type;

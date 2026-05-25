@@ -144,6 +144,7 @@ add_executable(
 	${SOURCE_DIR}/p_mapinfo.c
 	${SOURCE_DIR}/i_shaders.c
 	${SOURCE_DIR}/i_sectorcombiner.c
+	${SOURCE_DIR}/complexdoom64.c
 )
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY BUILD_RPATH ".")
