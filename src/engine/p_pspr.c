@@ -1304,7 +1304,7 @@ void A_SpiderFireLaser(mobj_t* actor)
 	if (!actor->target)
 		return;
 
-	A_FaceTarget(actor);
+	A_FaceTarget();
 
 	for (i = 0; i < 3; i++)
 	{
