@@ -30,26 +30,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -254,7 +254,7 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
     <ClCompile Include="..\src\engine\w_merge.c" />
     <ClCompile Include="..\src\engine\w_wad.c" />
     <ClCompile Include="..\src\engine\z_zone.c" />
-	<ClCompile Include="..\src\engine\complexdoom64.c" />
+    <ClCompile Include="..\src\engine\complexdoom64.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\engine\am_draw.h" />
@@ -343,7 +343,7 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
     <ClInclude Include="..\src\engine\w_merge.h" />
     <ClInclude Include="..\src\engine\w_wad.h" />
     <ClInclude Include="..\src\engine\z_zone.h" />
-	<ClInclude Include="..\src\engine\complexdoom64.h" />
+    <ClInclude Include="..\src\engine\complexdoom64.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="..\src\engine\doom64ex-plus-enhanced.ico" />
