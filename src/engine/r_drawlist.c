@@ -303,7 +303,7 @@ void DL_ProcessDrawList(int tag, boolean(*procfunc)(vtxlist_t*, int*)) {
 
                 if (tag != DLT_WALL) {
                     dglEnable(GL_POLYGON_OFFSET_FILL);
-                    dglPolygonOffset(4.0f, 8.0f);
+                    dglPolygonOffset(-4.0f, -8.0f);
                 }
 
                 int current_texture = -1;

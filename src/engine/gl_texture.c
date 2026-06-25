@@ -344,7 +344,7 @@ void GL_BindWorldTexture(int texnum, int* width, int* height) {
 		I_ShaderSetUseTexture(1);
 		I_ShaderSetTextureSize(texturewidth[texnum], textureheight[texnum]);
 		I_SectorCombiner_Bind(1, texturewidth[texnum], textureheight[texnum]);
-		APPLY_ALPHA_MODE_FOR_TEX(texnum);
+		//APPLY_ALPHA_MODE_FOR_TEX(texnum);
 		dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 		dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 		if (devparm)
