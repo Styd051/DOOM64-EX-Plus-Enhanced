@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -150,7 +150,7 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>false</EnableCOMDATFolding>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ProjectDir)\SDL3-3.2.24\lib\x64;C:\vcpkg\packages\libpng_x64-windows\lib;C:\vcpkg\packages\zlib_x64-windows\lib;D:\DOOM64-EX-Plus-Enhanced\FMOD_API\FMOD Studio API Windows\api\core\lib\x64;$(ProjectDir)..\thirdparty\Libs\x64;D:\DOOM64-EX-Plus-Enhanced\Windows\vcpkg_installed\x64-windows\lib</AdditionalLibraryDirectories>
@@ -237,6 +237,7 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
     <ClCompile Include="..\src\engine\r_bsp.c" />
     <ClCompile Include="..\src\engine\r_clipper.c" />
     <ClCompile Include="..\src\engine\r_drawlist.c" />
+    <ClCompile Include="..\src\engine\r_dynlights.c" />
     <ClCompile Include="..\src\engine\r_lights.c" />
     <ClCompile Include="..\src\engine\r_main.c" />
     <ClCompile Include="..\src\engine\r_scene.c" />
@@ -322,6 +323,7 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
     <ClInclude Include="..\src\engine\resource.h" />
     <ClInclude Include="..\src\engine\r_clipper.h" />
     <ClInclude Include="..\src\engine\r_drawlist.h" />
+    <ClInclude Include="..\src\engine\r_dynlights.h" />
     <ClInclude Include="..\src\engine\r_lights.h" />
     <ClInclude Include="..\src\engine\r_main.h" />
     <ClInclude Include="..\src\engine\r_sky.h" />

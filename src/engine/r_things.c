@@ -20,6 +20,7 @@
 //-----------------------------------------------------------------------------
 
 #include <SDL3/SDL_stdinc.h>
+#include "r_dynlights.h"
 
 extern void I_ShaderUnBind(void);
 extern void I_ShaderBind(void);
@@ -866,6 +867,13 @@ void R_DrawPSprite(pspdef_t* psp, sector_t* sector, player_t* player) {
 		byte a = (color >> 24) & 0xFF;
 
 		color = D_RGBA(r, g, b, a);
+
+		// styd: let the dynamic lights reach the weapon on screen too.
+		// Full-bright frames, muzzle flashes included, already draw at
+		// maximum brightness and are left alone.
+		if (!(psp->state->info_frame & FF_FULLBRIGHT)) {
+			color = R_DynLightApplyToWeapon(color, player);
+		}
 	}
 
 	spritenum = sprframe->lump[0];

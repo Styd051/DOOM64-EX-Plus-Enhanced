@@ -89,6 +89,7 @@ void G_BuildTiccmd(ticcmd_t* cmd);
 
 #define STRPAUSED    "Paused"
 
+CVAR_EXTERNAL(v_showfps);
 CVAR_EXTERNAL(sv_nomonsters);
 CVAR_EXTERNAL(sv_fastmonsters);
 CVAR_EXTERNAL(sv_respawnitems);
@@ -175,6 +176,11 @@ static void D_DrawInterface(void) {
 
 	if (devparm) {
 		D_DeveloperDisplay();
+	}
+	else if (v_showfps.value) {
+		// styd: devparm already draws the counter as part of the full
+		// developer readout, so only draw it here when it is not active
+		ST_DrawFPS(8);
 	}
 
 	BusyDisk = false;

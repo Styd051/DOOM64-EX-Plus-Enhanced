@@ -39,6 +39,7 @@
 #include "z_zone.h"
 #include "con_console.h"
 #include "r_drawlist.h"
+#include "r_dynlights.h"
 #include "gl_draw.h"
 #include "w_wad.h"
 #include "dgl.h"
@@ -721,6 +722,13 @@ void R_RenderPlayerView(player_t* player) {
 	R_SetupFrame(player);
 
 	//
+	// styd: gather dynamic projectile lights for this frame.
+	// must run before the BSP traversal, because the drawlist callbacks
+	// consume the light array while building vertices.
+	//
+	R_CollectDynLights();
+
+	//
 	// draw sky
 	//
 	if (bRenderSky) {
@@ -805,6 +813,7 @@ void R_RenderPlayerView(player_t* player) {
 //
 
 void R_RegisterCvars(void) {
+	R_DynLightsRegisterCvars();
 	CON_CvarRegister(&r_fov);
     CON_CvarRegister(&r_fillmode);
 	CON_CvarRegister(&r_fog);

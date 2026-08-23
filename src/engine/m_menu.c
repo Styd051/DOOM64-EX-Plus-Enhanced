@@ -810,6 +810,15 @@ CVAR_EXTERNAL(m_painelementalalpha);
 CVAR_EXTERNAL(m_limitpain);
 CVAR_EXTERNAL(m_fixspectrehitbox);
 CVAR_EXTERNAL(m_blockmapfix);
+CVAR_EXTERNAL(r_dynlights);
+CVAR_EXTERNAL(r_dynlightintensity);
+CVAR_EXTERNAL(r_dynlightsprites);
+CVAR_EXTERNAL(r_dynlightmuzzle);
+CVAR_EXTERNAL(r_dynlightquality);
+CVAR_EXTERNAL(r_dynlightprops);
+CVAR_EXTERNAL(r_dynlightdebug);
+CVAR_EXTERNAL(r_dynlightshadows);
+CVAR_EXTERNAL(r_dynlightweapon);
 
 enum {
 	enhanced_header1,
@@ -836,6 +845,16 @@ enum {
 	enhanced_complexdoom64,
 	enhanced_complexdoom64difficulty,
 	enhanced_complexdoom64nightmare,
+	enhanced_header6,
+	enhanced_dynlights,
+	enhanced_dynlightquality,
+	enhanced_dynlightintensity,
+	enhanced_dynlightsprites,
+	enhanced_dynlightweapon,
+	enhanced_dynlightshadows,
+	enhanced_dynlightprops,
+	enhanced_dynlightmuzzle,
+	enhanced_dynlightdebug,
 	enhanced_default,
 	enhanced_return,
 	enhanced_end
@@ -866,6 +885,16 @@ menuitem_t EnhancedMenu[] = {
 	{2,"Complex D64:",M_EnhancedChoice},
 	{2,"Difficulty:",M_EnhancedChoice},
 	{2,"Nightmare:",M_EnhancedChoice},
+	{-1,"Dynamic Lighting",0 },
+	{2,"Dynamic Lights:",M_EnhancedChoice },
+	{2,"Light Quality:",M_EnhancedChoice },
+	{2,"Light Intensity:",M_EnhancedChoice },
+	{2,"Light Things:",M_EnhancedChoice },
+	{2,"Light Weapon:",M_EnhancedChoice },
+	{2,"Light Blocking:",M_EnhancedChoice },
+	{2,"Scenery Lights:",M_EnhancedChoice },
+	{2,"Muzzle Flash:",M_EnhancedChoice },
+	{2,"Light Debug:",M_EnhancedChoice },
 	{-2,"Default",M_DoDefaults,'d'},
 	{1,"/r Return",M_Return, 0x20}
 };
@@ -896,6 +925,16 @@ char* EnhancedHints[enhanced_end] = {
 	"changes the difficulty of the randomizer of complex doom 64",
 	"increases or decreases the probability of nightmares",
 	NULL,
+	"projectiles and explosions cast real light on the world",
+	"detail level of the dynamic light falloff",
+	"strength of the light cast by projectiles",
+	"let dynamic lights illuminate monsters and objects",
+	"the weapon in your hands catches the light too",
+	"walls block light instead of letting it pass through",
+	"torches and flames cast light on the world too",
+	"the gun lights up the room when it is fired",
+	"shows the dynamic light budget on screen",
+	NULL,
 	//NULL
 };
 
@@ -919,6 +958,15 @@ menudefault_t EnhancedDefault[] = {
 	{ &m_complexdoom64, 0 },
 	{ &m_complexdoom64_difficulty, 0 },
 	{ &m_complexdoom64_nightmare, 1 },
+	{ &r_dynlights, 0 },
+	{ &r_dynlightquality, 2 },
+	{ &r_dynlightintensity, 5 },
+	{ &r_dynlightsprites, 1 },
+	{ &r_dynlightweapon, 1 },
+	{ &r_dynlightshadows, 1 },
+	{ &r_dynlightprops, 1 },
+	{ &r_dynlightmuzzle, 1 },
+	{ &r_dynlightdebug, 0 },
 	{ NULL, -1 }
 };
 
@@ -1024,6 +1072,56 @@ void M_EnhancedChoice(int choice) {
 			return;
 		M_SetOptionValue(choice, 0, 3, 1, &m_complexdoom64_nightmare);
 		break;
+
+	case enhanced_dynlights:
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlights);
+		break;
+
+	case enhanced_dynlightquality:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 0, 3, 1, &r_dynlightquality);
+		break;
+
+	case enhanced_dynlightintensity:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 1, 10, 1, &r_dynlightintensity);
+		break;
+
+	case enhanced_dynlightsprites:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlightsprites);
+		break;
+
+	case enhanced_dynlightweapon:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlightweapon);
+		break;
+
+	case enhanced_dynlightshadows:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlightshadows);
+		break;
+
+	case enhanced_dynlightprops:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlightprops);
+		break;
+
+	case enhanced_dynlightmuzzle:
+		if (!r_dynlights.value)
+			return;
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlightmuzzle);
+		break;
+
+	case enhanced_dynlightdebug:
+		M_SetOptionValue(choice, 0, 1, 1, &r_dynlightdebug);
+		break;
 	}
 }
 
@@ -1040,6 +1138,8 @@ void M_DrawEnhanced(void) {
 	static const char* revenantprojectilespeedtype[2] = { "PSX", "Classic" };
 	static const char* complexdoom64difficultytype[3] = { "Normal", "Hardcore", "Chaos"};
 	static const char* complexdoom64nightmaretype[4] = { "Off", "Low", "Medium", "High"};
+	static const char* dynlightqualitytype[4] = { "Off", "Low", "Medium", "High" };
+	static const char* dynlightintensitytype[11] = { "-", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" };
 	int y;
 
 #define DRAWMISCITEM(a, b, c) \
@@ -1070,6 +1170,15 @@ void M_DrawEnhanced(void) {
 	DRAWMISCITEM(enhanced_complexdoom64, m_complexdoom64.value, msgNames);
 	DRAWMISCITEM(enhanced_complexdoom64difficulty, m_complexdoom64_difficulty.value, complexdoom64difficultytype);
 	DRAWMISCITEM(enhanced_complexdoom64nightmare, m_complexdoom64_nightmare.value, complexdoom64nightmaretype);
+	DRAWMISCITEM(enhanced_dynlights, r_dynlights.value, msgNames);
+	DRAWMISCITEM(enhanced_dynlightquality, r_dynlightquality.value, dynlightqualitytype);
+	DRAWMISCITEM(enhanced_dynlightintensity, r_dynlightintensity.value, dynlightintensitytype);
+	DRAWMISCITEM(enhanced_dynlightsprites, r_dynlightsprites.value, msgNames);
+	DRAWMISCITEM(enhanced_dynlightweapon, r_dynlightweapon.value, msgNames);
+	DRAWMISCITEM(enhanced_dynlightshadows, r_dynlightshadows.value, msgNames);
+	DRAWMISCITEM(enhanced_dynlightprops, r_dynlightprops.value, msgNames);
+	DRAWMISCITEM(enhanced_dynlightmuzzle, r_dynlightmuzzle.value, msgNames);
+	DRAWMISCITEM(enhanced_dynlightdebug, r_dynlightdebug.value, msgNames);
 
 #undef DRAWMISCITEM
 
@@ -1801,6 +1910,7 @@ void M_ToggleDamageHud(int choice);
 void M_ToggleWpnDisplay(int choice);
 void M_ToggleShowStats(int choice);
 void M_ToggleShowStatsAlwaysOn(int choice);
+void M_ToggleShowFPS(int choice);
 void M_ChangeCrosshair(int choice);
 void M_ChangeOpacity(int choice);
 void M_DrawDisplay(void);
@@ -1814,6 +1924,7 @@ CVAR_EXTERNAL(st_flashoverlay);
 CVAR_EXTERNAL(st_showpendingweapon);
 CVAR_EXTERNAL(st_showstats);
 CVAR_EXTERNAL(st_showstatsalwayson);
+CVAR_EXTERNAL(v_showfps);
 CVAR_EXTERNAL(m_messages);
 CVAR_EXTERNAL(p_damageindicator);
 CVAR_EXTERNAL(st_hud_color);
@@ -1827,6 +1938,7 @@ enum {
 	display_weapon,
 	display_stats,
 	display_stats_always_on,
+	display_showfps,
 	display_hud_color,
 	display_fov,
 	display_empty2,
@@ -1846,6 +1958,7 @@ menuitem_t DisplayMenu[] = {
 	{2,"Show Weapon:",M_ToggleWpnDisplay, 'w'},
 	{2,"Show Stats:",M_ToggleShowStats, 't'},
 	{2,"Show Stats Always:",M_ToggleShowStatsAlwaysOn, 'a'},
+	{2,"Show FPS:",M_ToggleShowFPS, 'p'},
 	{3,"HUD Colour",M_ChangeHUDColor, 'o'},
 	{3,"Field of View",M_ChangeFOV, 'v'},
 	{-1,"",0},
@@ -1864,6 +1977,7 @@ char* DisplayHints[display_end] = {
 	"shows the next or previous pending weapon",
 	"display level stats in automap",
 	"display level stats in-game",
+	"display the framerate counter in-game",
 	"change the hud text colour",
 	"change the field of view",
 	NULL,
@@ -1881,6 +1995,7 @@ menudefault_t DisplayDefault[] = {
 	{ &st_showpendingweapon, 1 },
 	{ &st_showstats, 0 },
 	{ &st_showstatsalwayson, 0 },
+	{ &v_showfps, 0 },
 	{ &st_hud_color, 0 },
 	{ &r_fov, 75 },
 	{ &st_crosshair, 0 },
@@ -1992,6 +2107,14 @@ void M_ToggleShowStats(int choice) {
 void M_ToggleShowStatsAlwaysOn(int choice) {
 	M_SetOptionValue(choice, 0, 1, 1, &st_showstatsalwayson);
 	st_showstats.value = 0;
+}
+
+//
+// M_ToggleShowFPS
+//
+
+void M_ToggleShowFPS(int choice) {
+	M_SetOptionValue(choice, 0, 1, 1, &v_showfps);
 }
 
 void M_ToggleFlashOverlay(int choice) {

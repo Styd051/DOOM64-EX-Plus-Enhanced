@@ -32,12 +32,14 @@
 #include "dgl.h"
 #include "con_cvar.h"
 #include "m_fixed.h"
+#include "r_dynlights.h"
 
 CVAR_EXTERNAL(r_texturecombiner);
 CVAR_EXTERNAL(i_interpolateframes);
 CVAR_EXTERNAL(r_fog);
 CVAR_EXTERNAL(r_rendersprites);
 CVAR_EXTERNAL(st_flashoverlay);
+CVAR_EXTERNAL(r_dynlightsprites);
 
 int game_world_shader_scope = 0;
 
@@ -60,6 +62,48 @@ static boolean ProcessWalls(vtxlist_t* vl, int* drawcount) {
 
 	if (!vl->callback(seg, &drawVertex[*drawcount])) {
 		return false;
+	}
+
+	//
+	// styd: dynamic projectile lighting.
+	// When a light reaches this wall, split the quad into a grid first so
+	// the falloff can actually be seen across it, then light the pieces.
+	// Otherwise emit the plain quad and light its four corners.
+	//
+	{
+		dlmask_t dlmask = R_DynLightMaskForWall(&drawVertex[*drawcount], sec);
+
+		// Narrow by radius before anything expensive: a sight ray costs a
+		// blockmap walk, so it must only ever be paid for a light that could
+		// actually light this surface.
+		dlmask = R_DynLightsSurfaceMask(&drawVertex[*drawcount], 4, dlmask);
+
+		if (dlmask) {
+			// centre of the quad: one sight ray decides the whole surface
+			const vtx_t* q = &drawVertex[*drawcount];
+
+			dlmask = R_DynLightMaskLineOfSight(dlmask,
+				(q[0].x + q[1].x + q[2].x + q[3].x) * 0.25f,
+				(q[0].y + q[1].y + q[2].y + q[3].y) * 0.25f,
+				(q[0].z + q[1].z + q[2].z + q[3].z) * 0.25f);
+		}
+
+		if (dlmask) {
+			vtx_t   srcv[4];
+			int     added;
+
+			dmemcpy(srcv, &drawVertex[*drawcount], sizeof(vtx_t) * 4);
+
+			added = R_SubdivideWall(srcv, *drawcount, dlmask);
+
+			if (added > 0) {
+				R_ApplyDynLights(&drawVertex[*drawcount], added, dlmask);
+				*drawcount += added;
+				return true;
+			}
+
+			R_ApplyDynLights(&drawVertex[*drawcount], 4, dlmask);
+		}
 	}
 
 	dglTriangle(*drawcount + 0, *drawcount + 1, *drawcount + 2);
@@ -88,9 +132,12 @@ static boolean ProcessFlats(vtxlist_t* vl, int* drawcount) {
 	sector = ss->sector;
 	count = *drawcount;
 
-	for (j = 0; j < ss->numleafs - 2; j++) {
-		dglTriangle(count, count + 1 + j, count + 2 + j);
-	}
+	//
+	// styd: the fan used to be emitted here, before the vertices existed.
+	// It is now emitted at the bottom of the function, because whether we
+	// keep the plain fan or replace it with a subdivided mesh depends on
+	// the vertex positions we are about to compute.
+	//
 
 	// need to keep texture coords small to avoid
 	// floor 'wobble' due to rounding errors on some cards
@@ -170,6 +217,59 @@ static boolean ProcessFlats(vtxlist_t* vl, int* drawcount) {
 		count++;
 	}
 
+	//
+	// styd: dynamic projectile lighting.
+	// Doom 64 floors are huge and have very few vertices, so a light either
+	// misses every corner or floods the whole plane. Subdivide the fan when
+	// a light can reach it.
+	//
+	if (ss->numleafs <= DL_MAXPOLYVERTS) {
+		dlmask_t dlmask = R_DynLightMaskForFlat(&drawVertex[*drawcount],
+			(boolean)((vl->flags & DLF_CEILING) != 0), sector);
+
+		dlmask = R_DynLightsSurfaceMask(&drawVertex[*drawcount],
+			ss->numleafs, dlmask);
+
+		if (dlmask) {
+			// centroid of the leaf fan
+			const vtx_t* lv = &drawVertex[*drawcount];
+			float   cx = 0.0f;
+			float   cy = 0.0f;
+			float   inv = 1.0f / (float)ss->numleafs;
+			int     k;
+
+			for (k = 0; k < ss->numleafs; k++) {
+				cx += lv[k].x;
+				cy += lv[k].y;
+			}
+
+			dlmask = R_DynLightMaskLineOfSight(dlmask,
+				cx * inv, cy * inv, lv[0].z);
+		}
+
+		if (dlmask) {
+			vtx_t   srcv[DL_MAXPOLYVERTS];
+			int     added;
+
+			dmemcpy(srcv, &drawVertex[*drawcount], sizeof(vtx_t) * ss->numleafs);
+
+			added = R_SubdivideFlat(srcv, ss->numleafs, *drawcount, dlmask);
+
+			if (added > 0) {
+				R_ApplyDynLights(&drawVertex[*drawcount], added, dlmask);
+				*drawcount += added;
+				return true;
+			}
+
+			R_ApplyDynLights(&drawVertex[*drawcount], ss->numleafs, dlmask);
+		}
+	}
+
+	// plain fan
+	for (j = 0; j < ss->numleafs - 2; j++) {
+		dglTriangle(*drawcount, *drawcount + 1 + j, *drawcount + 2 + j);
+	}
+
 	*drawcount = count;
 
 	return true;
@@ -192,6 +292,27 @@ static boolean ProcessSprites(vtxlist_t* vl, int* drawcount) {
 
 	if (!vl->callback(vis, &drawVertex[*drawcount])) {
 		return false;
+	}
+
+	// styd: dynamic projectile lighting.
+	// full-bright things already draw at maximum brightness (this includes
+	// the projectiles that emit the light in the first place), and nightmare
+	// things use their own tint from the Nightmare Color option, so both are
+	// left alone here.
+	if (r_dynlightsprites.value &&
+		!(mobj->flags & (MF_NIGHTMARE | MF_RENDERLASER)) &&
+		!(mobj->frame & FF_FULLBRIGHT)) {
+		dlmask_t dlmask = R_DynLightMaskForThing(mobj->subsector->sector);
+
+		dlmask = R_DynLightsSurfaceMask(&drawVertex[*drawcount], 4, dlmask);
+
+		if (dlmask) {
+			dlmask = R_DynLightMaskLineOfSight(dlmask,
+				F2D3D(mobj->x), F2D3D(mobj->y),
+				F2D3D(mobj->z + (mobj->height >> 1)));
+
+			R_ApplyDynLights(&drawVertex[*drawcount], 4, dlmask);
+		}
 	}
 
 	GL_SetState(GLSTATE_CULL, !(mobj->flags & MF_RENDERLASER));

@@ -23,6 +23,7 @@
 //-----------------------------------------------------------------------------
 
 #include <math.h>
+#include "r_dynlights.h"
 
 #include "p_pspr.h"
 #include "doomdef.h"
@@ -718,6 +719,9 @@ void A_FirePistol(player_t* player, pspdef_t* psp)
 {
 	S_StartSound(player->mo, sfx_pistol);
 
+	// styd: dynamic muzzle flash light
+	R_TriggerMuzzleFlash(player, wp_pistol);
+
 	player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
 	P_SetPsprite(player, ps_flash, weaponinfo[player->readyweapon].flashstate);
@@ -734,6 +738,9 @@ void A_FireShotgun(player_t* player, pspdef_t* psp) {
 
 	S_StartSound(player->mo, sfx_shotgun);
 	P_SetMobjState(player->mo, S_PLAY_ATK2);
+
+	// styd: dynamic muzzle flash light
+	R_TriggerMuzzleFlash(player, wp_shotgun);
 
 	player->ammo[weaponinfo[player->readyweapon].ammo]--;
 	player->recoilpitch = RECOILPITCH;
@@ -757,6 +764,9 @@ void A_FireShotgun2(player_t* player, pspdef_t* psp) {
 
 	S_StartSound(player->mo, sfx_sht2fire);
 	P_SetMobjState(player->mo, S_PLAY_ATK2);
+
+	// styd: dynamic muzzle flash light
+	R_TriggerMuzzleFlash(player, wp_supershotgun);
 	player->ammo[weaponinfo[player->readyweapon].ammo] -= 2;
 
 	P_SetPsprite(player, ps_flash, weaponinfo[player->readyweapon].flashstate);
@@ -790,6 +800,9 @@ void A_FireCGun(player_t* player, pspdef_t* psp) {
 	}
 
 	S_StartSound(player->mo, sfx_pistol);
+
+	// styd: dynamic muzzle flash light
+	R_TriggerMuzzleFlash(player, wp_chaingun);
 
 	P_SetMobjState(player->mo, S_PLAY_ATK2);
 	player->ammo[weaponinfo[player->readyweapon].ammo]--;
@@ -1035,6 +1048,14 @@ void T_LaserThinker(laserthinker_t* laserthinker) {
 		}
 
 		// remove marker and free laser
+		//
+		// styd: clear the back pointer first. P_RemoveMobj only schedules a
+		// deferred removal, so the marker stays in the mobj list until the
+		// next run; without this it would keep pointing at the laser_t we
+		// are about to free, and anything walking the mobj list in between
+		// - the dynamic light collector, for one - would read freed memory.
+		laser->marker->extradata = NULL;
+
 		P_RemoveMobj(laser->marker);
 		Z_Free(laser);
 	}

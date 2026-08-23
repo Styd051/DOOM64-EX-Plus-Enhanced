@@ -25,6 +25,7 @@
 //-----------------------------------------------------------------------------
 
 #include <stdio.h>
+#include "r_dynlights.h"
 
 #include "st_stuff.h"
 #include "doomdef.h"
@@ -64,6 +65,7 @@ CVAR(st_showstats, 0);
 CVAR(st_showstatsalwayson, 0);
 CVAR(st_hud_color, 0);
 
+CVAR_EXTERNAL(r_dynlightdebug);
 CVAR_EXTERNAL(p_usecontext);
 CVAR_EXTERNAL(p_damageindicator);
 CVAR_EXTERNAL(v_accessibility);
@@ -1033,6 +1035,27 @@ void ST_Drawer(void) {
 	//
 	// display stats in game
 	//
+
+	//
+	// styd: dynamic light budget readout
+	//
+	if (r_dynlightdebug.value) {
+		int total = 0;
+		int scenery = 0;
+		int dropped = 0;
+		int nearestfire = 0;
+
+		R_DynLightDebugCounts(&total, &scenery, &dropped, &nearestfire);
+
+		Draw_Text(20, 60, WHITE, 0.5f, false,
+			"DYNLIGHTS TOTAL: %i OF %i", total, MAX_DYNLIGHTS);
+		Draw_Text(20, 70, WHITE, 0.5f, false,
+			"SCENERY LIGHTS:  %i", scenery);
+		Draw_Text(20, 80, WHITE, 0.5f, false,
+			"DROPPED:         %i", dropped);
+		Draw_Text(20, 90, WHITE, 0.5f, false,
+			"NEAREST FIRE AT: %i", nearestfire);
+	}
 
 	if (stats_always_on) {
 		Draw_Text(520, 10, RED, 0.5f, false,

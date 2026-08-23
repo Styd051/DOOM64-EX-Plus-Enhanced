@@ -121,6 +121,7 @@ add_executable(
 	${SOURCE_DIR}/p_tick.c
 	${SOURCE_DIR}/r_clipper.c
 	${SOURCE_DIR}/r_drawlist.c
+	${SOURCE_DIR}/r_dynlights.c
 	${SOURCE_DIR}/r_lights.c
 	${SOURCE_DIR}/r_main.c
 	${SOURCE_DIR}/r_scene.c
