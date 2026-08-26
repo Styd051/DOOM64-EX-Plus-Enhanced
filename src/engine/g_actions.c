@@ -95,7 +95,8 @@ static CMD(UnbindAll);
 //
 
 void G_InitActions(void) {
-	dmemset(AllActions, 0, NUM_ACTIONS);
+	// [styd] NUM_ACTIONS is a count of pointers, not a count of bytes
+	dmemset(AllActions, 0, NUM_ACTIONS * sizeof(alist_t*));
 	KeyActions = AllActions + KEY_ACTIONPOS;
 	GamepadActions = AllActions + GAMEPAD_ACTIONPOS;
 	MouseActions = AllActions + MOUSE_ACTIONPOS;
@@ -419,8 +420,16 @@ boolean G_ActionResponder(event_t* ev) {
 
 		TryActions(GamepadActions[ev->data1], ev->type == ev_gamepadup);
 		break;
+
+		//
+		// [styd] ev_gamepad used to carry the stick positions, but the event
+		// struct only has two float slots and a gamepad has four axes, so
+		// the old handler read data1/data4 as ints and silently dropped
+		// half the input. The axes now go straight into Controls through
+		// G_SetGamepadAxes, which is called once per tic from
+		// I_GamepadUpdate. Nothing posts ev_gamepad any more.
+		//
 	case ev_gamepad:
-		G_DoCmdGamepadMove(ev->data1, ev->data2, ev->data3, ev->data4);
 		break;
 	}
 
@@ -575,6 +584,19 @@ alist_t** G_FindKeyByName(char* key) {
 		return(FindActionControler(&key[5], MouseActions, MOUSE_BUTTONS));
 	}
 
+	//
+	// [styd] gamepad buttons. Checked before the keyboard table because
+	// this is the hot path when a config full of "bind PadRT ..." lines is
+	// parsed at startup, and because no keyboard key name begins with
+	// "Pad" so the two namespaces cannot collide.
+	//
+	for (i = 0; i < NUMGAMEPADBTNS; i++) {
+		M_GetGamepadButtonName(buff, i);
+		if (dstricmp(key, buff) == 0) {
+			return(&GamepadActions[i]);
+		}
+	}
+
 	for (i = 0; i < NUMKEYS; i++) {
 		M_GetKeyName(buff, i);
 		if (dstricmp(key, buff) == 0) {
@@ -640,6 +662,19 @@ boolean G_BindActionByEvent(event_t* ev, char* action) {
 			plist = &MouseActions[button];
 		}
 		break;
+
+		//
+		// [styd] gamepad buttons are bindable from the menu like any other
+		// control. Only the press is taken: binding on the release would
+		// make the pad fire the action it was just bound to as the player
+		// lets go of the button.
+		//
+	case ev_gamepaddown:
+		if ((ev->data1 >= 0) && (ev->data1 < NUMGAMEPADBTNS)) {
+			plist = &GamepadActions[ev->data1];
+		}
+		break;
+
 	default:
 		break;
 	}
@@ -713,6 +748,20 @@ void G_OutputBindings(FILE* fh) {
 			name[7] = 0;
 			OutputActions(fh, al, name);
 		}
+	}
+
+	//
+	// [styd] gamepad bindings. Without this the pad had to be reconfigured
+	// on every launch, because nothing wrote its bindings back out.
+	//
+	for (i = 0; i < NUMGAMEPADBTNS; i++) {
+		al = GamepadActions[i];
+		if (!al) {
+			continue;
+		}
+
+		M_GetGamepadButtonName(name, i);
+		OutputActions(fh, al, name);
 	}
 
 	// cvars
@@ -1137,13 +1186,23 @@ static CMD(Unbind) {
 static void UnbindActions(alist_t** alist, int num) {
 	int i;
 
+	//
+	// [styd] this used to dereference alist[0] whatever i was, then return
+	// on the first non-empty slot. So unbindall freed the first bound
+	// action, left its pointer dangling, and left every other binding in
+	// place.
+	//
+	// It went unnoticed because the only caller ran at startup, against an
+	// action table that was still empty. Resetting the bindings from the
+	// menu runs it against a full one.
+	//
 	for (i = 0; i < num; i++) {
 		if (!alist[i]) {
 			continue;
 		}
 
-		DerefActionList(*alist);
-		return;
+		DerefActionList(alist[i]);
+		alist[i] = NULL;
 	}
 }
 
@@ -1257,6 +1316,23 @@ void G_GetActionBindings(char* buff, char* action) {
 			}
 		}
 	}
+
+	// [styd] gamepad buttons bound to this action
+	for (i = 0; i < NUMGAMEPADBTNS; i++) {
+		if (IsSameAction(action, GamepadActions[i])) {
+			if (p != buff) {
+				*(p++) = ',';
+			}
+
+			M_GetGamepadButtonName(p, i);
+
+			p += dstrlen(p);
+
+			if (p - buff >= MAX_MENUACTION_LENGTH) {
+				return;
+			}
+		}
+	}
 }
 
 //
@@ -1266,15 +1342,23 @@ void G_GetActionBindings(char* buff, char* action) {
 void G_UnbindAction(char* action) {
 	int i;
 
+	//
+	// [styd] removes EVERY binding on the action, not the first one found.
+	//
+	// Each loop used to return as soon as it removed something, so the menu
+	// had to call this twice to clear a key and a mouse button. With the pad
+	// in the picture an action can carry four bindings at once, and the row
+	// only half cleared.
+	//
 	for (i = 0; i < NUMKEYS; i++) {
 		if (IsSameAction(action, KeyActions[i])) {
-			char p[16];
+			char p[MAX_KEY_NAME_LENGTH];
 
 			M_GetKeyName(p, i);
 			Unbind(p);
-			return;
 		}
 	}
+
 	for (i = 0; i < MOUSE_BUTTONS; i++) {
 		if (IsSameAction(action, MouseActions[i])) {
 			char p[16];
@@ -1283,8 +1367,8 @@ void G_UnbindAction(char* action) {
 			p[5] = i + '1';
 
 			Unbind(p);
-			return;
 		}
+
 		if (IsSameAction(action, Mouse2Actions[i])) {
 			char p[16];
 
@@ -1292,7 +1376,21 @@ void G_UnbindAction(char* action) {
 			p[6] = i + '1';
 
 			Unbind(p);
-			return;
+		}
+	}
+
+	//
+	// Gamepad buttons. Without this loop, Delete in the bindings menu
+	// silently skipped them: it walked the keyboard and mouse tables, found
+	// nothing left to remove, and returned, so a pad binding could be added
+	// but never taken away.
+	//
+	for (i = 0; i < NUMGAMEPADBTNS; i++) {
+		if (IsSameAction(action, GamepadActions[i])) {
+			char p[MAX_KEY_NAME_LENGTH];
+
+			M_GetGamepadButtonName(p, i);
+			Unbind(p);
 		}
 	}
 }

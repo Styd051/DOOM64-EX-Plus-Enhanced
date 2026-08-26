@@ -46,7 +46,7 @@
 #include "r_lights.h"
 #include "r_main.h"
 #include "con_console.h"
-#include "i_sdlinput.h"
+#include "i_sdlinput.h"   // [styd] SDL_clamp and the gamepad axis API
 #include "g_demo.h"
 #include "g_controls.h"
 #include "g_settings.h"
@@ -160,6 +160,11 @@ CVAR_EXTERNAL(p_fdoubleclick);
 CVAR_EXTERNAL(p_sdoubleclick);
 CVAR_EXTERNAL(v_msensitivityx);
 CVAR_EXTERNAL(v_msensitivityy);
+// [styd] gamepad settings, defined in i_sdlinput.c
+CVAR_EXTERNAL(v_gamepadsensx);
+CVAR_EXTERNAL(v_gamepadsensy);
+CVAR_EXTERNAL(v_gamepadinvert);
+CVAR_EXTERNAL(v_gamepadlayout);
 CVAR_EXTERNAL(m_nospawnsound);
 CVAR_EXTERNAL(m_secretsound);
 CVAR_EXTERNAL(m_obituaries);
@@ -814,9 +819,82 @@ void G_BuildTiccmd(ticcmd_t* cmd) {
 		side -= sidemove[speed];
 	}
 
+	//
+	// [styd] analog gamepad axes.
+	//
+	// These are absolute stick positions, refreshed every tic by
+	// I_GamepadUpdate, so unlike mousex/mousey they are read here and never
+	// cleared - clearing them would make the stick stutter whenever a tic
+	// ran without a fresh pad poll.
+	//
+	if (pc->flags & PCF_GAMEPAD) {
+		// full stick deflection matches the fastest keyboard turn at the
+		// default sensitivity of 5, so the pad and the keyboard feel like
+		// the same game
+		const float turnmax = (float)(angleturn[19] << 2);
+
+		//
+		// The sensitivities are clamped here rather than trusted.
+		//
+		// The menu caps them at MAXSENSITIVITY, but the console does not:
+		// "v_gamepadsensx 500" put nearly 100000 into a float that is then
+		// converted to the short of a ticcmd, which is undefined behaviour
+		// in C, not a merely large turn. A negative value simply reversed
+		// the stick, which is what the invert option is for.
+		//
+		float sensx = SDL_clamp((float)v_gamepadsensx.value, 0.f, (float)MAXSENSITIVITY) * 0.2f;
+		float sensy = SDL_clamp((float)v_gamepadsensy.value, 0.f, (float)MAXSENSITIVITY) * 0.2f;
+
+		// accumulated in an int so that combining the stick with a held
+		// turn key cannot wrap the short either
+		int turn = 0;
+		int pitch = 0;
+
+		if (pc->joymovey != 0.0f) {
+			forward += (int)(pc->joymovey * (float)forwardmove[speed]);
+		}
+
+		if (pc->joymovex != 0.0f) {
+			if ((int)v_gamepadlayout.value == 1 && !pc->key[PCKEY_STRAFE]) {
+				// N64 layout: the left stick turns, and strafing is on the
+				// strafe modifier, the way the original pad worked
+				turn -= (int)(pc->joymovex * turnmax * sensx);
+			}
+			else {
+				side += (int)(pc->joymovex * (float)sidemove[speed]);
+			}
+		}
+
+		if (pc->joylookx != 0.0f) {
+			turn -= (int)(pc->joylookx * turnmax * sensx);
+		}
+
+		//
+		// Pitch obeys the same free look gate as the mouse, and is inverted
+		// exactly once. It used to be inverted here AND in I_GamepadUpdate,
+		// which cancelled out and left the invert option doing nothing.
+		//
+		if (pc->joylooky != 0.0f &&
+			forcefreelook != 2 && ((int)v_mlook.value || forcefreelook)) {
+			pitch = (int)(pc->joylooky * turnmax * sensy);
+
+			if ((int)v_gamepadinvert.value) {
+				pitch = -pitch;
+			}
+		}
+
+		if (turn) {
+			cmd->angleturn = (short)SDL_clamp((int)cmd->angleturn + turn,
+				INT16_MIN, INT16_MAX);
+		}
+
+		if (pitch) {
+			cmd->pitch = (short)SDL_clamp((int)cmd->pitch + pitch,
+				INT16_MIN, INT16_MAX);
+		}
+	}
+
 	pc->mousex = pc->mousey = 0;
-	pc->joymovex = pc->joymovey = 0;
-	pc->joylookx = pc->joylooky = 0;
 
 	cmd->chatchar = ST_DequeueChatChar();
 
@@ -935,30 +1013,37 @@ void G_BuildTiccmd(ticcmd_t* cmd) {
 }
 
 //
-// G_DoCmdGamepadMove
+// G_SetGamepadAxes
+// [styd]
 //
-void G_DoCmdGamepadMove(int lx, int ly, int rx, int ry)
-{
+// Called once per tic by I_GamepadUpdate with the four stick axes already
+// normalised to -1.0 .. 1.0 (dead zone and response curve applied).
+//
+// This replaces G_DoCmdGamepadMove, which took four ints, divided them by
+// INT16_MAX, and was fed a mix of ints and floats out of an event struct
+// that only has room for two floats. Its results were never read by
+// G_BuildTiccmd either, so the whole analog path was dead.
+//
+// The values are stored, not accumulated: they are a position, not a delta.
+// PCF_GAMEPAD is cleared when every axis is at rest so that a pad left
+// plugged in and untouched costs nothing in G_BuildTiccmd.
+//
+void G_SetGamepadAxes(float movex, float movey, float lookx, float looky) {
 	playercontrols_t* pc;
-	float x;
-	float y;
 
 	pc = &Controls;
-	pc->flags |= PCF_GAMEPAD;
 
-	x = (float)lx / INT16_MAX;
-	y = (float)ly / INT16_MAX;
+	pc->joymovex = movex;
+	pc->joymovey = movey;
+	pc->joylookx = lookx;
+	pc->joylooky = looky;
 
-	pc->joymovex += x;
-	pc->joymovey += y;
-
-	x = (float)rx / INT16_MAX;
-	y = (float)ry / INT16_MAX;
-
-	pc->joylookx += x;
-	pc->joylooky += y;
-
-	return;
+	if (movex != 0.0f || movey != 0.0f || lookx != 0.0f || looky != 0.0f) {
+		pc->flags |= PCF_GAMEPAD;
+	}
+	else {
+		pc->flags &= ~PCF_GAMEPAD;
+	}
 }
 
 //
@@ -1105,8 +1190,10 @@ boolean G_Responder(event_t* ev) {
 		*/
 
 		if (demoplayback && gameaction == ga_nothing) {
+			// [styd] same dead event type as the titlemap skip below: the
+			// pad could not break out of a demo either
 			if (ev->type == ev_keydown ||
-				ev->type == ev_gamepad) {
+				ev->type == ev_gamepaddown) {
 				G_CheckDemoStatus();
 				gameaction = ga_warpquick;
 				return true;
@@ -1125,12 +1212,28 @@ boolean G_Responder(event_t* ev) {
 		}
 	}
 
+	// [styd] the cast rotates its sprite from the pad's d-pad or stick.
+	// Returns false unless the cast is actually on screen.
+	if (F_Responder(ev)) {
+		return true;
+	}
+
 	// Handle screen specific ticcmds
 	if (gamestate == GS_SKIPPABLE) {
 		if (gameaction == ga_nothing) {
+			//
+			// [styd] this used to look for ev_gamepad, the event type that
+			// once carried the stick axes. Nothing posts it any more, and
+			// it was never a button press in the first place, so the pad
+			// could not skip the intro at all.
+			//
+			// Presses only, like the keyboard: a release would let a button
+			// held as the titlemap begins skip it before it is even seen,
+			// and stick drift should not skip anything.
+			//
 			if (ev->type == ev_keydown ||
 				(ev->type == ev_mouse && ev->data1) ||
-				ev->type == ev_gamepad) {
+				ev->type == ev_gamepaddown) {
 				gameaction = ga_title;
 				return true;
 			}
@@ -1694,6 +1797,25 @@ void G_DeferedInitNew(skill_t skill, int map) {
 // G_Init
 //
 
+//
+// CMD_AutoRun
+// [styd]
+//
+// defconfig.inc has bound Caps to "autorun" for as long as the fork has
+// existed, but no such command was ever registered, so the binding did
+// nothing and the console printed an unknown command on every startup.
+// Implemented here so the shipped binding works, and so the pad's left
+// stick click has something to do.
+//
+
+static CMD(AutoRun) {
+	int val = (int)p_autorun.value ? 0 : 1;
+
+	CON_CvarSetValue(p_autorun.name, (float)val);
+
+	players[consoleplayer].message = val ? "Autorun On" : "Autorun Off";
+}
+
 void G_Init(void) {
 	G_ReloadDefaults();
 	G_InitActions();
@@ -1709,6 +1831,7 @@ void G_Init(void) {
 	G_AddCommand("-use", CMD_Button, PCKEY_USE | PCKF_UP);
 	G_AddCommand("+run", CMD_Button, PCKEY_RUN);
 	G_AddCommand("-run", CMD_Button, PCKEY_RUN | PCKF_UP);
+	G_AddCommand("autorun", CMD_AutoRun, 0);
 	G_AddCommand("weapon", CMD_Weapon, 0);
 	G_AddCommand("nextweap", CMD_NextWeapon, 0);
 	G_AddCommand("prevweap", CMD_PrevWeapon, 0);

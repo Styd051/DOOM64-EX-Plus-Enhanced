@@ -35,7 +35,6 @@
 #include "w_wad.h"
 #include "i_sdlinput.h"
 
-extern gamepad64_t gamepad64;
 
 #define RGB_ALPHA      D_RGBA(0xC0, 0, 0, 0xFF)
 
@@ -137,8 +136,6 @@ int WI_Ticker(void) {
 	player_t* player;
 	int         i;
 	boolean    next = false;
-	static boolean pad_attack_prev = false;
-	static boolean pad_use_prev = false;
 
 	if (wi_advance <= 3) {
 		for (i = 0, player = players; i < MAXPLAYERS; i++, player++) {
@@ -156,44 +153,22 @@ int WI_Ticker(void) {
 				player->usedown = (player->cmd.buttons & BT_USE) != 0;
 			}
 		}
-		{
-			const float TRIGGER_THRESH = 0.30f;
-			boolean pad_attack_now = false;
-			boolean pad_use_now = false;
-
-			if (gamepad64.gamepad) {
-				float rt = (float)SDL_GetGamepadAxis(gamepad64.gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
-					/ 32767.0f;
-				const boolean rt_pressed = (rt >= TRIGGER_THRESH);
-				const boolean rb_pressed = SDL_GetGamepadButton(gamepad64.gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) != 0;
-				const boolean a_pressed = SDL_GetGamepadButton(gamepad64.gamepad, SDL_GAMEPAD_BUTTON_SOUTH) != 0;
-				const boolean start_btn = SDL_GetGamepadButton(gamepad64.gamepad, SDL_GAMEPAD_BUTTON_START) != 0;
-
-				pad_attack_now = (rt_pressed || rb_pressed);
-				pad_use_now = (a_pressed || start_btn);
-			}
-			else if (gamepad64.joy) {
-				// Generic joystick fallback
-				const boolean a_pressed = SDL_GetJoystickButton(gamepad64.joy, 0) != 0;   // A
-				const boolean start_btn = SDL_GetJoystickButton(gamepad64.joy, 9) != 0;   // Start
-				const boolean rt_pressed = SDL_GetJoystickButton(gamepad64.joy, 7) != 0;   // RT
-				const boolean rb_pressed = SDL_GetJoystickButton(gamepad64.joy, 5) != 0;   // RB
-
-				pad_attack_now = (rt_pressed || rb_pressed);
-				pad_use_now = (a_pressed || start_btn);
-			}
-
-			if (pad_attack_now && !pad_attack_prev) {
-				S_StartSound(NULL, sfx_explode);
-				wi_advance++;
-			}
-			if (pad_use_now && !pad_use_prev) {
-				S_StartSound(NULL, sfx_explode);
-				wi_advance++;
-			}
-			pad_attack_prev = pad_attack_now;
-			pad_use_prev = pad_use_now;
-		}
+		//
+		// [styd] the hardcoded gamepad polling that used to live here is gone.
+		//
+		// It read the pad directly, with its own guessed button numbers, and
+		// raised wi_advance on its own. But the pad's right trigger is bound
+		// to +fire, so a single pull already arrived above as BT_ATTACK: the
+		// press counted TWICE and wi_advance jumped straight from 0 to 2.
+		//
+		// That skipped the wi_advance == 1 branch below, which is the branch
+		// that fills killvalue/itemvalue/secretvalue and sets wi_stage to 5.
+		// The result was an intermission frozen on the kill counter with the
+		// other lines never appearing - while the keyboard, which only ever
+		// counted once, worked.
+		//
+		// The pad now goes through the ticcmd like every other control.
+		//
 	}
 
 	// accelerate counters

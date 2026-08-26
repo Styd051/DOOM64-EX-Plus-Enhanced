@@ -34,6 +34,10 @@
 #include "con_cvar.h"
 
 static int          castrotation = 0;
+
+// [styd] true only while the cast is on screen, so F_Responder can ignore
+// events the rest of the time
+static boolean      castactive = false;
 static int          castnum;
 static int     casttics;
 static state_t* caststate;
@@ -200,6 +204,7 @@ static void F_GetCastVisual(
 //
 
 void F_Start(void) {
+	castactive = true;
 	castorder = m_extendedcast.value > 0 ? extendedorder : originalorder;
 
 	gameaction = ga_nothing;
@@ -228,9 +233,46 @@ void F_Start(void) {
 //
 
 void F_Stop(void) {
+	castactive = false;
 	S_StopMusic();
 	//gameaction = ga_nothing;
 	WIPE_FadeScreen(6);
+}
+
+//
+// F_Responder
+// [styd]
+//
+// The cast rotates its sprite from pc->key[PCKEY_LEFT] and PCKEY_RIGHT,
+// which are the turn bindings. On the keyboard those are the arrow keys, so
+// it worked. The pad turns with an analog axis and never touches them, and
+// its d-pad is bound to automap panning, so nothing on the pad could turn
+// the monster round.
+//
+// Handled here rather than by binding the d-pad differently: the cast is
+// the only screen that wants this, and taking the pad's d-pad away from the
+// automap to serve it would be a poor trade.
+//
+// The left stick already stands in for the d-pad outside GS_LEVEL, so this
+// covers the stick as well, auto-repeat included.
+//
+boolean F_Responder(event_t* ev) {
+	if (!castactive || castdeath || ev->type != ev_gamepaddown) {
+		return false;
+	}
+
+	// same direction as the keyboard: left winds the rotation up
+	if (ev->data1 == GAMEPADBTN_DPAD_LEFT) {
+		castrotation = (castrotation + 1) & 7;
+		return true;
+	}
+
+	if (ev->data1 == GAMEPADBTN_DPAD_RIGHT) {
+		castrotation = (castrotation - 1) & 7;
+		return true;
+	}
+
+	return false;
 }
 
 //

@@ -25,12 +25,60 @@
 
 #include "m_keys.h"
 #include "doomdef.h"
+#include "g_controls.h"
 
 
 typedef struct {
 	int        code;
 	char* name;
 } keyinfo_t;
+
+//
+// [styd] gamepad button names, indexed by the button numbering declared in
+// g_controls.h (SDL_GamepadButton order, then the two virtual triggers).
+//
+// Two constraints shaped these names:
+//
+//   - the menu font only knows A-Z, a-z, 0-9, space and "- % ! . ? :", so
+//     no punctuation and no accented characters;
+//   - the bindings menu prints them in a 25 character column shared by every
+//     binding on that action, so they stay short.
+//
+// The face buttons are named by position (South/East/West/North in SDL's
+// terms) rather than by the Xbox letters, because on a DualSense or a
+// Switch pad the letters are wrong. PadA is the bottom face button whatever
+// is printed on it.
+//
+static char* GamepadButtons[NUM_GAMEPADBTNS] = {
+	"PadA",         // SDL_GAMEPAD_BUTTON_SOUTH
+	"PadB",         // SDL_GAMEPAD_BUTTON_EAST
+	"PadX",         // SDL_GAMEPAD_BUTTON_WEST
+	"PadY",         // SDL_GAMEPAD_BUTTON_NORTH
+	"PadBack",      // SDL_GAMEPAD_BUTTON_BACK
+	"PadGuide",     // SDL_GAMEPAD_BUTTON_GUIDE
+	"PadStart",     // SDL_GAMEPAD_BUTTON_START
+	"PadLStick",    // SDL_GAMEPAD_BUTTON_LEFT_STICK
+	"PadRStick",    // SDL_GAMEPAD_BUTTON_RIGHT_STICK
+	"PadLB",        // SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
+	"PadRB",        // SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
+	"PadUp",        // SDL_GAMEPAD_BUTTON_DPAD_UP
+	"PadDown",      // SDL_GAMEPAD_BUTTON_DPAD_DOWN
+	"PadLeft",      // SDL_GAMEPAD_BUTTON_DPAD_LEFT
+	"PadRight",     // SDL_GAMEPAD_BUTTON_DPAD_RIGHT
+	"PadMisc1",     // SDL_GAMEPAD_BUTTON_MISC1
+	"PadP1",        // SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1
+	"PadP3",        // SDL_GAMEPAD_BUTTON_LEFT_PADDLE1
+	"PadP2",        // SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2
+	"PadP4",        // SDL_GAMEPAD_BUTTON_LEFT_PADDLE2
+	"PadTouch",     // SDL_GAMEPAD_BUTTON_TOUCHPAD
+	"PadMisc2",
+	"PadMisc3",
+	"PadMisc4",
+	"PadMisc5",
+	"PadMisc6",
+	"PadLT",        // GAMEPADBTN_LTRIGGER, virtual
+	"PadRT",        // GAMEPADBTN_RTRIGGER, virtual
+};
 
 static keyinfo_t    Keys[] = {
 	{KEY_RIGHTARROW,        "Right"},
@@ -130,4 +178,21 @@ int M_GetKeyName(char* buff, int key) {
 	}
 	sprintf(buff, "Key%02x", key);
 	return false;
+}
+
+//
+// M_GetGamepadButtonName
+// [styd]
+//
+
+int M_GetGamepadButtonName(char* buff, int btn) {
+	if (btn < 0 || btn >= NUM_GAMEPADBTNS || !GamepadButtons[btn]) {
+		// out of the labelled range: still give it a stable, bindable name
+		// so a config written by a newer SDL survives a round trip
+		sprintf(buff, "PadBtn%02d", btn);
+		return false;
+	}
+
+	dstrcpy(buff, GamepadButtons[btn]);
+	return true;
 }

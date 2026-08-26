@@ -46,6 +46,7 @@
 #include "sounds.h"
 #include "m_shift.h"
 #include "m_password.h"
+#include "g_settings.h"
 #include "p_saveg.h"
 #include "p_setup.h"
 #include "gl_texture.h"
@@ -113,6 +114,17 @@ void(*menufadefunc)(void) = NULL;
 static char     MenuBindBuff[256];
 static char     MenuBindMessage[256];
 static boolean MenuBindActive = false;
+
+//
+// [styd] hides the mouse pointer while the pad is driving the menu.
+//
+// The pointer is drawn from mouse_x/mouse_y, which do not move when the pad
+// navigates, so it sat frozen over an item the player was no longer on and
+// read as a second, stuck cursor. Raised by any pad input, lowered as soon
+// as the mouse actually moves, so picking either device up puts its own
+// pointer back in charge.
+//
+static boolean MenuPadNavigating = false;
 
 static int MenuBindIgnoreUntilTic = 0;
 static boolean MenuBindEntryWasMouse = false;
@@ -1897,6 +1909,307 @@ void M_ChangeYAxisMove(int choice) {
 void M_ChangeXAxisMove(int choice) {
 	M_SetOptionValue(choice, 0, 1, 1, &v_xaxismove);
 }
+
+//------------------------------------------------------------------------
+//
+// GAMEPAD MENU
+// [styd]
+//
+//------------------------------------------------------------------------
+
+void M_ChangeGamepadEnable(int choice);
+void M_ChangeGamepadSens(int choice);
+void M_ChangeGamepadDeadZone(int choice);
+void M_ChangeGamepadRumble(int choice);
+void M_ChangeGamepadInvert(int choice);
+void M_ChangeGamepadLayout(int choice);
+void M_DrawGamepad(void);
+
+CVAR_EXTERNAL(v_gamepad);
+CVAR_EXTERNAL(v_gamepadsensx);
+CVAR_EXTERNAL(v_gamepadsensy);
+CVAR_EXTERNAL(v_gamepadinvert);
+CVAR_EXTERNAL(v_gamepaddeadzone);
+CVAR_EXTERNAL(v_gamepadlayout);
+CVAR_EXTERNAL(v_gamepadrumble);
+CVAR_EXTERNAL(v_mlook);
+
+// the font has no comma and no apostrophe, so these stay plain
+static char* GamepadLayoutNames[2] = { "Modern", "N64" };
+
+enum {
+	gamepad_enable,
+	gamepad_sensx,
+	gamepad_empty1,
+	gamepad_sensy,
+	gamepad_empty2,
+	gamepad_deadzone,
+	gamepad_empty3,
+	gamepad_rumble,
+	gamepad_empty4,
+	gamepad_invert,
+	gamepad_layout,
+	gamepad_default,
+	gamepad_return,
+	gamepad_end
+} gamepad_e;
+
+menuitem_t GamepadMenu[] = {
+	//
+	// [styd] the font is proportional and the value column starts at
+	// x + 144, so a label wider than roughly "Stick Layout:" runs into its
+	// own value. "Enable Gamepad:" and "Look Up-Down:" both did.
+	//
+	{2,"Gamepad:",M_ChangeGamepadEnable,'e'},
+	{3,"Look Sensitivity X",M_ChangeGamepadSens, 'x'},
+	{-1,"",0},
+	{3,"Look Sensitivity Y",M_ChangeGamepadSens, 'y'},
+	{-1,"",0},
+	{3,"Stick Dead Zone",M_ChangeGamepadDeadZone, 'z'},
+	{-1,"",0},
+	{3,"Rumble",M_ChangeGamepadRumble, 'r'},
+	{-1,"",0},
+	{2,"Invert Look:",M_ChangeGamepadInvert, 'i'},
+	{2,"Stick Layout:",M_ChangeGamepadLayout, 's'},
+	{-2,"Default",M_DoDefaults,'d'},
+	{1,"/r Return",M_Return, 0x20}
+};
+
+char* GamepadHints[gamepad_end] = {
+	"buttons are set in the bindings menu",
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	"ignore small stick movement near centre",
+	NULL,
+	"vibration strength when you take damage",
+	NULL,
+	NULL,
+	"modern: left stick strafes. n64: it turns",
+	NULL,
+	NULL
+};
+
+menudefault_t GamepadDefault[] = {
+	{ &v_gamepad, 1 },
+	{ &v_gamepadsensx, 5 },
+	{ &v_gamepadsensy, 5 },
+	{ &v_gamepaddeadzone, 18 },
+	{ &v_gamepadrumble, 5 },
+	{ &v_gamepadinvert, 0 },
+	{ &v_gamepadlayout, 0 },
+	{ NULL, -1 }
+};
+
+menuthermobar_t GamepadBars[] = {
+	{ gamepad_empty1, MAXSENSITIVITY, &v_gamepadsensx },
+	{ gamepad_empty2, MAXSENSITIVITY, &v_gamepadsensy },
+	{ gamepad_empty3, 40, &v_gamepaddeadzone },
+	{ gamepad_empty4, 10, &v_gamepadrumble },
+	{ -1, 0 }
+};
+
+menu_t GamepadDef = {
+	gamepad_end,
+	false,
+	&ControlMenuDef,
+	GamepadMenu,
+	M_DrawGamepad,
+	"Gamepad",
+	//
+	// [styd] x and y are in this page's own coordinate space, which the
+	// scale below divides into. They are chosen so that the first row lands
+	// where every other options page puts it (104 * 0.8) rather than drifting
+	// left and up as the scale shrinks.
+	//
+	119,52,
+	0,
+	false,
+	GamepadDefault,
+	-1,
+	0,
+	//
+	// [styd] 0.65, not the 0.8 the other pages use.
+	//
+	// This page carries thirteen lines because each of the four sliders
+	// needs a spacer row beneath it for its bar. At 0.8 the last rows
+	// reached down into the band where the hint and the pad name are
+	// drawn, and the red items and the white text printed on top of each
+	// other.
+	//
+	0.7f,
+	GamepadHints,
+	GamepadBars
+};
+
+void M_DrawGamepad(void) {
+	const char* padname;
+
+	M_DrawThermo(GamepadDef.x, GamepadDef.y + LINEHEIGHT * (gamepad_sensx + 1),
+		MAXSENSITIVITY, v_gamepadsensx.value);
+	M_DrawThermo(GamepadDef.x, GamepadDef.y + LINEHEIGHT * (gamepad_sensy + 1),
+		MAXSENSITIVITY, v_gamepadsensy.value);
+	M_DrawThermo(GamepadDef.x, GamepadDef.y + LINEHEIGHT * (gamepad_deadzone + 1),
+		40, v_gamepaddeadzone.value);
+	M_DrawThermo(GamepadDef.x, GamepadDef.y + LINEHEIGHT * (gamepad_rumble + 1),
+		10, v_gamepadrumble.value);
+
+	Draw_BigText(GamepadDef.x + 144, GamepadDef.y + LINEHEIGHT * gamepad_enable,
+		MENUCOLORRED, msgNames[(int)v_gamepad.value]);
+	Draw_BigText(GamepadDef.x + 144, GamepadDef.y + LINEHEIGHT * gamepad_invert,
+		MENUCOLORRED, msgNames[(int)v_gamepadinvert.value]);
+	Draw_BigText(GamepadDef.x + 144, GamepadDef.y + LINEHEIGHT * gamepad_layout,
+		MENUCOLORRED, GamepadLayoutNames[(int)v_gamepadlayout.value == 1 ? 1 : 0]);
+
+	//
+	// Bottom band. Drawn at the same 0.5 ortho scale every other page uses
+	// for its hint, so these two lines sit where the player already expects
+	// them and stay clear of the menu body whatever this page's own scale
+	// is.
+	//
+	// Naming the connected pad is the quickest way to tell a dead pad from
+	// a wrong binding, which is otherwise a long guess.
+	//
+	GL_SetOrthoScale(0.5f);
+
+	if (GamepadDef.hints[itemOn] != NULL) {
+		Draw_BigText(-1, 410, MENUCOLORWHITE, GamepadDef.hints[itemOn]);
+	}
+
+	padname = I_GamepadName();
+
+	Draw_BigText(-1, 440, MENUCOLORWHITE,
+		padname ? (char*)padname : "No Gamepad Detected");
+
+	GL_SetOrthoScale(GamepadDef.scale);
+}
+
+void M_ChangeGamepadEnable(int choice) {
+	M_SetOptionValue(choice, 0, 1, 1, &v_gamepad);
+}
+
+void M_ChangeGamepadInvert(int choice) {
+	M_SetOptionValue(choice, 0, 1, 1, &v_gamepadinvert);
+}
+
+void M_ChangeGamepadLayout(int choice) {
+	M_SetOptionValue(choice, 0, 1, 1, &v_gamepadlayout);
+}
+
+void M_ChangeGamepadSens(int choice) {
+	float slope = (float)MAXSENSITIVITY / 100.0f;
+
+	switch (choice) {
+	case 0:
+		switch (itemOn) {
+		case gamepad_sensx:
+			if (v_gamepadsensx.value > 0.0f) {
+				M_SetCvar(&v_gamepadsensx, v_gamepadsensx.value - slope);
+			}
+			else {
+				CON_CvarSetValue(v_gamepadsensx.name, 0);
+			}
+			break;
+		case gamepad_sensy:
+			if (v_gamepadsensy.value > 0.0f) {
+				M_SetCvar(&v_gamepadsensy, v_gamepadsensy.value - slope);
+			}
+			else {
+				CON_CvarSetValue(v_gamepadsensy.name, 0);
+			}
+			break;
+		}
+		break;
+
+	case 1:
+		switch (itemOn) {
+		case gamepad_sensx:
+			if (v_gamepadsensx.value < (float)MAXSENSITIVITY) {
+				M_SetCvar(&v_gamepadsensx, v_gamepadsensx.value + slope);
+			}
+			else {
+				CON_CvarSetValue(v_gamepadsensx.name, (float)MAXSENSITIVITY);
+			}
+			break;
+		case gamepad_sensy:
+			if (v_gamepadsensy.value < (float)MAXSENSITIVITY) {
+				M_SetCvar(&v_gamepadsensy, v_gamepadsensy.value + slope);
+			}
+			else {
+				CON_CvarSetValue(v_gamepadsensy.name, (float)MAXSENSITIVITY);
+			}
+			break;
+		}
+		break;
+	}
+}
+
+//
+// [styd] 0 stops the motors entirely, 10 is full strength.
+//
+void M_ChangeGamepadRumble(int choice) {
+	float before = v_gamepadrumble.value;
+
+	switch (choice) {
+	case 0:
+		if (v_gamepadrumble.value > 0.0f) {
+			M_SetCvar(&v_gamepadrumble, v_gamepadrumble.value - 1);
+		}
+		else {
+			CON_CvarSetValue(v_gamepadrumble.name, 0);
+		}
+		break;
+
+	case 1:
+		if (v_gamepadrumble.value < 10.0f) {
+			M_SetCvar(&v_gamepadrumble, v_gamepadrumble.value + 1);
+		}
+		else {
+			CON_CvarSetValue(v_gamepadrumble.name, 10);
+		}
+		break;
+	}
+
+	//
+	// Buzz at the new setting so the slider previews itself - a rumble
+	// strength is impossible to judge from a bar. Only when the value
+	// actually moved: at either end of the range the row would otherwise
+	// buzz forever while the stick is held there. I_GamepadRumble applies
+	// the setting itself, so a value of 0 is silent with no test here.
+	//
+	if (v_gamepadrumble.value != before) {
+		I_GamepadRumble(1.0f, 200);
+	}
+}
+
+void M_ChangeGamepadDeadZone(int choice) {
+	//
+	// Capped at 40 percent. A dead zone any larger reads as a broken stick,
+	// and the player would have no way back: the menu they need in order to
+	// undo it is one of the things the stick navigates.
+	//
+	switch (choice) {
+	case 0:
+		if (v_gamepaddeadzone.value > 0.0f) {
+			M_SetCvar(&v_gamepaddeadzone, v_gamepaddeadzone.value - 1);
+		}
+		else {
+			CON_CvarSetValue(v_gamepaddeadzone.name, 0);
+		}
+		break;
+
+	case 1:
+		if (v_gamepaddeadzone.value < 40.0f) {
+			M_SetCvar(&v_gamepaddeadzone, v_gamepaddeadzone.value + 1);
+		}
+		else {
+			CON_CvarSetValue(v_gamepaddeadzone.name, 40);
+		}
+		break;
+	}
+}
+
 //------------------------------------------------------------------------
 //
 // DISPLAY MENU
@@ -2952,11 +3265,14 @@ void M_DoFeature(int choice) {
 //------------------------------------------------------------------------
 
 void M_ChangeKeyBinding(int choice);
+void M_ResetBindings(int choice);
 void M_BuildControlMenu(void);
 void M_DrawControls(void);
 
+// [styd] one spare slot past the action list, for the Default entry that
+// M_BuildControlMenu appends after the bindable actions
 #define NUM_CONTROL_ACTIONS     51
-#define NUM_CONTROL_ITEMS       NUM_CONTROL_ACTIONS
+#define NUM_CONTROL_ITEMS       (NUM_CONTROL_ACTIONS + 2)
 
 menuaction_t* PlayerActions;
 menu_t          ControlsDef;
@@ -3068,10 +3384,45 @@ void M_BuildControlMenu(void) {
 
 		menu->menuitems[item].alphaKey = 0;
 	}
+
+	//
+	// [styd] Default, appended after the action list.
+	//
+	// Every other options page has one, but the bindings page had none, so
+	// a control bound to something unreachable could only be repaired by
+	// editing config.cfg by hand.
+	//
+	dstrcpy(menu->menuitems[item].name, "Default");
+	menu->menuitems[item].status = 1;
+	menu->menuitems[item].routine = M_ResetBindings;
+	menu->menuitems[item].alphaKey = 'd';
+	item++;
+
+	menu->numitems = item;
+}
+
+//
+// M_ResetBindings
+// [styd]
+//
+
+void M_ResetBindings(int choice) {
+	G_ResetBindings();
+
+	// the page is built from the bindings, so it has to be rebuilt to show
+	// what the reset actually did
+	M_BuildControlMenu();
 }
 
 void M_ChangeKeyBinding(int choice) {
 	char action[128];
+
+	// [styd] a row with no action is a header or the Default row, and has
+	// nothing to bind
+	if (!PlayerActions[choice].action) {
+		return;
+	}
+
 	sprintf(action, "%s %d", PlayerActions[choice].action, 1);
 	dstrcpy(MenuBindBuff, action);
 	messageBindCommand = MenuBindBuff;
@@ -3097,6 +3448,7 @@ void M_DrawControlMenu(void);
 enum {
 	controls_keyboard,
 	controls_mouse,
+	controls_gamepad,
 	controls_return,
 	controls_end
 } controls_e;
@@ -3104,12 +3456,14 @@ enum {
 menuitem_t ControlsMenu[] = {
 	{1,"Bindings",M_ControlChoice, 'k'},
 	{1,"Mouse",M_ControlChoice, 'm'},
+	{1,"Gamepad",M_ControlChoice, 'g'},
 	{1,"/r Return",M_Return, 0x20}
 };
 
 char* ControlsHints[controls_end] = {
 	"configure bindings",
 	"configure mouse functionality",
+	"configure gamepad functionality",
 	NULL
 };
 
@@ -3139,6 +3493,9 @@ void M_ControlChoice(int choice) {
 		break;
 	case controls_mouse:
 		M_SetupNextMenu(&MouseDef);
+		break;
+	case controls_gamepad:
+		M_SetupNextMenu(&GamepadDef);
 		break;
 	}
 }
@@ -4100,6 +4457,9 @@ boolean M_Responder(event_t* ev) {
 	}
 
 	if (ev->type == ev_mousedown) {
+		// [styd] a click takes the pointer back from the pad
+		MenuPadNavigating = false;
+
 		if (ev->data1 & 1) {
 			ch = KEY_ENTER;
 		}
@@ -4123,12 +4483,90 @@ boolean M_Responder(event_t* ev) {
 		}
 	}
 	else if (ev->type == ev_mouse && (ev->data2 != 0.0 || ev->data3 != 0.0)) {
+		// [styd] the mouse moved, so it takes the pointer back
+		MenuPadNavigating = false;
+
 		// handle mouse-over selection
 		if (m_menumouse.value) {
 			M_CheckDragThermoBar(ev, currentMenu);
 			if (M_CursorHighlightItem(currentMenu))
 				itemOn = itemSelected;
 		}
+	}
+	//
+	// [styd] gamepad.
+	//
+	// Menus are driven by discrete key codes, so a pad button is translated
+	// into one here rather than in the input layer. Doing it here is what
+	// keeps the pad bindable: i_sdlinput.c posts the button itself, and the
+	// only place that assumes what a button means is this function, which
+	// governs the menu and nothing else.
+	//
+	// While a binding is being captured the event is left untouched so it
+	// reaches G_BindActionByEvent below, which is how a pad button gets
+	// bound to an action at all.
+	//
+	else if (ev->type == ev_gamepaddown && !MenuBindActive) {
+		MenuPadNavigating = true;
+
+		if (!menuactive) {
+			//
+			// Outside a menu the pad is nothing but a set of bindable
+			// buttons, with one exception: Start opens the menu, the way
+			// it does on a console. Everything else is passed straight
+			// through to the action system.
+			//
+			if (ev->data1 != GAMEPADBTN_START) {
+				return false;
+			}
+
+			ch = KEY_ESCAPE;
+		}
+		else {
+			switch (ev->data1) {
+			case GAMEPADBTN_DPAD_UP:    ch = KEY_UPARROW;    break;
+			case GAMEPADBTN_DPAD_DOWN:  ch = KEY_DOWNARROW;  break;
+			case GAMEPADBTN_DPAD_LEFT:  ch = KEY_LEFTARROW;  break;
+			case GAMEPADBTN_DPAD_RIGHT: ch = KEY_RIGHTARROW; break;
+			case GAMEPADBTN_SOUTH:      ch = KEY_ENTER;      break;
+			case GAMEPADBTN_EAST:       ch = KEY_BACKSPACE;  break;
+			case GAMEPADBTN_START:      ch = KEY_ESCAPE;     break;
+			case GAMEPADBTN_BACK:       ch = KEY_ESCAPE;     break;
+			case GAMEPADBTN_LSHOULDER:  ch = KEY_PAGEUP;     break;
+			case GAMEPADBTN_RSHOULDER:  ch = KEY_PAGEDOWN;   break;
+			default:
+				// any other button does nothing in a menu, but is still
+				// swallowed so that it cannot reach the action it is
+				// bound to in the game underneath
+				return true;
+			}
+		}
+	}
+	else if (ev->type == ev_gamepadup) {
+		MenuPadNavigating = true;
+
+		//
+		// [styd] a slider row keeps sliding for as long as thermowait is
+		// set: M_Ticker calls its routine every tic, and only an ev_keyup
+		// cleared the flag. The pad never sends ev_keyup, so once the stick
+		// nudged a slider it ran to the end of its range and stayed there.
+		// Clearing it here is the pad's equivalent of releasing the arrow
+		// key.
+		//
+		thermowait = 0;
+
+		//
+		// Releases always pass through to the action system, exactly like
+		// ev_keyup does.
+		//
+		// Swallowing them here seemed tidier but latches anything held when
+		// the menu opens: the press had already reached the action system,
+		// and its release would never arrive, so the player came back from
+		// the menu still firing. An orphaned release is harmless the other
+		// way round, because CMD_Button refuses to decrement a count that
+		// is already at zero.
+		//
+		return false;
 	}
 
 	// atsb fixes a long time EX bug where the mouse didn't allow binding as it swallowed the inputs
@@ -4363,7 +4801,17 @@ boolean M_Responder(event_t* ev) {
 					currentMenu->menuitems[itemOn].routine(2);
 				}
 				else {
-					if (currentMenu == &ControlsDef) {
+					//
+					// [styd] the bindings page used to call
+					// M_ChangeKeyBinding for whatever row was selected,
+					// ignoring the routine the row actually carries. That
+					// was fine while every row was a binding, but the
+					// Default row is not: pressing Enter on it opened the
+					// bind prompt for PlayerActions[49], which is the NULL
+					// terminator, and printed "Press New Key For (null)".
+					//
+					if (currentMenu == &ControlsDef &&
+						currentMenu->menuitems[itemOn].routine == M_ChangeKeyBinding) {
 						// don't do the fade effect and jump straight to the next screen
 						M_ChangeKeyBinding(itemOn);
 					}
@@ -4391,7 +4839,14 @@ boolean M_Responder(event_t* ev) {
 			M_PasswordDeSelect();
 		}
 		else if (currentMenu == &ControlsDef) {
-			if (currentMenu->menuitems[itemOn].routine) {
+			//
+			// [styd] only the bindable rows respond to Delete. The Default
+			// row has a routine too, and its slot in PlayerActions is the
+			// NULL terminator, so testing the routine alone walked straight
+			// into G_UnbindAction(NULL).
+			//
+			if (currentMenu->menuitems[itemOn].routine == M_ChangeKeyBinding &&
+				PlayerActions[itemOn].action) {
 				G_UnbindAction(PlayerActions[itemOn].action);
 				M_BuildControlMenu();
 			}
@@ -4564,21 +5019,30 @@ static void M_DrawMenuSkull(int x, int y) {
 
 static void M_DrawCursor()
 {
-	if (!m_menumouse.value) return;
-
-	cursor_x = mouse_x;
-	cursor_y = mouse_y;
-
-	int gfxIdx;
+	int gfxIdx = -1;
 	float factor;
 	float scale;
+	boolean draw;
+
+	//
+	// [styd] the pointer itself is skipped when the mouse is switched off or
+	// when the pad is driving the menu. The GL state work below is NOT
+	// skipped.
+	//
+	// This is the last thing drawn each frame, so the state it leaves behind
+	// is the state the next frame starts in - and on the title screen that
+	// next thing is the DOOM 64 logo. Returning early left the colour logic
+	// op and the blend mode as the menu text had set them, and the logo came
+	// back washed out. The same was already true whenever m_menumouse was
+	// off; it had simply never been noticed.
+	//
+	draw = (m_menumouse.value != 0.0f) && !MenuPadNavigating;
 
 	scale = ((m_cursorscale.value + 25.0f) / 100.0f);
-	gfxIdx = GL_BindGfxTexture("CURSOR", true);
-	if (gfxIdx < 0)
-		return;
 
-	factor = (((float)SCREENHEIGHT * video_ratio) / (float)video_width) / scale;
+	if (draw) {
+		gfxIdx = GL_BindGfxTexture("CURSOR", true);
+	}
 
 	// atsb: fixes cursor alpha
 	dglDisable(GL_COLOR_LOGIC_OP);
@@ -4589,22 +5053,29 @@ static void M_DrawCursor()
 	dglEnable(GL_BLEND);
 	dglDisable(GL_ALPHA_TEST);
 	dglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
-	GL_SetOrthoScale(scale);
+	if (gfxIdx >= 0) {
+		cursor_x = mouse_x;
+		cursor_y = mouse_y;
 
-	dglColor4ub(255, 255, 255, 255);
+		factor = (((float)SCREENHEIGHT * video_ratio) / (float)video_width) / scale;
 
-	GL_SetupAndDraw2DQuad((float)cursor_x * factor, (float)cursor_y * factor,
-		gfxwidth[gfxIdx], gfxheight[gfxIdx], 0, 1.0f, 0, 1.0f, WHITE, 0);
+		dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		dglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+		GL_SetOrthoScale(scale);
+
+		dglColor4ub(255, 255, 255, 255);
+
+		GL_SetupAndDraw2DQuad((float)cursor_x * factor, (float)cursor_y * factor,
+			gfxwidth[gfxIdx], gfxheight[gfxIdx], 0, 1.0f, 0, 1.0f, WHITE, 0);
+	}
 
 	GL_SetState(GLSTATE_BLEND, 0);
 	dglDepthMask(GL_TRUE);
 	GL_SetOrthoScale(1.0f);
-
 }
 
 //

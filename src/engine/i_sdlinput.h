@@ -27,8 +27,9 @@
 
 #include "doomtype.h"
 
+#include "g_controls.h"
+
 extern int UseMouse[2];
-extern int UseJoystick;
 extern float mouse_x;
 extern float mouse_y;
 
@@ -48,24 +49,52 @@ void I_CenterMouse(void);
 void I_SetMousePos(float x, float y);
 boolean I_UpdateGrab(void);
 
-const char* I_KeycodeToName_All(int keycode);
-int I_NameToKeycode_All(const char* name);
-void I_RegisterGamepadKeyNames(void);
-
+//
+// [styd] gamepad state.
+//
+// The old struct carried one bool per hardcoded game action, because the
+// pad synthesised keyboard presses (W, A, S, D, Ctrl, E...) instead of
+// reporting itself as a gamepad. That made the pad unbindable and broke it
+// outright on any layout where the player had rebound movement, which on an
+// AZERTY keyboard is everybody.
+//
+// The pad now reports button indices through ev_gamepaddown/ev_gamepadup
+// and goes through the normal binding system, so all that state collapses
+// into one bitmask of what was held last tic, used for edge detection.
+//
 typedef struct {
 	SDL_Gamepad* gamepad;
 	SDL_Joystick* joy;
 	SDL_JoystickID active_id;
 
-	bool player_forward, player_backwards, player_left, player_right;
-	bool player_fire, player_next_weapon, player_previous_weapon, player_use, player_pause, player_run, player_automap;
+	// one bit per button index, as of the previous poll
+	unsigned int    held[(NUM_GAMEPADBTNS + 31) / 32];
 
-	bool mouse_up, mouse_down, mouse_left, mouse_right;
-	bool mouse_accept, mouse_back, mouse_scroll_up, mouse_scroll_down;
-	unsigned int right_arrow_key_up, right_arrow_key_down, right_arrow_key_left, right_arrow_key_right;
-	float gamepad_look_fx, gamepad_look_fy, gamepad_look_dx, gamepad_look_dy;
+	// menu repeat timers for the four directions
+	int             menu_repeat[4];
+	bool            menu_held[4];
 
-	bool init;
+	// smoothed look axes, carried between polls by the low pass filter
+	float           look_fx;
+	float           look_fy;
+
+	// whether the previous poll was in menu context, so that the change of
+	// meaning of the stick across that boundary can be absorbed
+	bool            was_in_menu;
+
+	bool            init;
 } gamepad64_t;
+
+extern gamepad64_t gamepad64;
+
+// true when a pad is connected and enabled
+boolean I_GamepadPresent(void);
+
+// name of the connected pad, or NULL. Used by the gamepad options menu.
+const char* I_GamepadName(void);
+
+// [styd] strength 0.0 to 1.0, duration in milliseconds. Silent when no pad
+// is connected or v_gamepadrumble is 0, so callers need no guard.
+void I_GamepadRumble(float strength, int duration_ms);
 
 #endif

@@ -167,3 +167,20 @@ void G_LoadSettings(void) {
 	G_ExecuteFile(G_GetConfigFileName());
 	g_in_load_settings = false;
 }
+
+//
+// G_ResetBindings
+// [styd]
+//
+
+void G_ResetBindings(void) {
+	//
+	// DefaultConfig is only unbindall followed by bind lines, so running it
+	// resets the controls without disturbing any cvar the player has set.
+	// g_in_load_settings is raised for the duration so that nothing treats
+	// this as interactive input.
+	//
+	g_in_load_settings = true;
+	G_ExecuteMultipleCommands(DefaultConfig);
+	g_in_load_settings = false;
+}

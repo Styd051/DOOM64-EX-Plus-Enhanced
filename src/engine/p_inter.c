@@ -43,6 +43,7 @@
 #include "st_stuff.h"
 #include "tables.h"
 #include "info.h"
+#include "i_sdlinput.h"
 #include "r_lights.h"
 #include "r_main.h"
 #include "i_shaders.h"
@@ -1129,6 +1130,26 @@ void P_DamageMobj(mobj_t* target, mobj_t* inflictor, mobj_t* source, int damage)
 
 		if (player->damagecount > 100) {
 			player->damagecount = 100;    // teleport stomp does 10k points...
+		}
+
+		//
+		// [styd] gamepad rumble on damage.
+		//
+		// Only for the player sitting at this machine: in a netgame every
+		// player's damage passes through here, and there is one pad.
+		//
+		// Strength is scaled by the fraction of maximum health the hit took
+		// off, with a floor so that a small scratch is still felt, and the
+		// duration grows with it. A 10 point graze is a short tap, a 60
+		// point rocket is a long heavy shake. Silent when no pad is
+		// connected or the rumble slider is at zero.
+		//
+		if (player == &players[consoleplayer]) {
+			float frac = SDL_clamp((float)damage / 60.0f, 0.f, 1.f);
+			float strength = 0.25f + (0.75f * frac);
+			int duration = 120 + (int)(frac * 260.0f);
+
+			I_GamepadRumble(strength, duration);
 		}
 	}
 

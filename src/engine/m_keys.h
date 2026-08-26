@@ -22,4 +22,11 @@
 
 int M_GetKeyName(char* buff, int key);
 
+//
+// [styd] name of a gamepad button, for the bindings menu and the config
+// file. Returns false and writes a generic "PadBtnNN" name for indices
+// that the current SDL does not label.
+//
+int M_GetGamepadButtonName(char* buff, int btn);
+
 #endif

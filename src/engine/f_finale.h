@@ -18,6 +18,9 @@
 #ifndef __F_FINALE__
 #define __F_FINALE__
 
+#include "doomtype.h"
+#include "d_event.h"
+
 //
 // FINALE
 //
@@ -25,6 +28,7 @@
 void    F_Start(void);
 void    F_Stop(void);
 int     F_Ticker(void);     // Called by main loop.
+boolean F_Responder(event_t* ev);   // [styd] pad input for the cast
 void    F_Drawer(void);
 
 void    IN_Start(void);
