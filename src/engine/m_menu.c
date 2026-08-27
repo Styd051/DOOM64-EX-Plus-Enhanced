@@ -44,7 +44,6 @@
 #include "s_sound.h"
 #include "doomstat.h"
 #include "sounds.h"
-#include "m_shift.h"
 #include "m_password.h"
 #include "g_settings.h"
 #include "p_saveg.h"
@@ -3960,6 +3959,61 @@ static void M_SetInputString(char* string, int len) {
 
 	inputCharIndex = dstrlen(inputString);
 	inputMax = len;
+
+	// [styd] from here on SDL reports the characters the layout produces
+	I_StartTextInput();
+}
+
+//
+// M_StopInputString
+//
+// [styd] leaves the text field, from wherever. Text input has to be switched
+// off again or an IME could sit on top of the game.
+//
+
+static void M_StopInputString(void) {
+	if (!inputEnter) {
+		return;
+	}
+
+	inputEnter = false;
+	I_StopTextInput();
+}
+
+//
+// M_InputChar
+//
+// [styd] Takes one printable character straight from the keyboard layout, by
+// way of ev_text.
+//
+// This used to be the default case of the inputEnter switch, where a raw key
+// code was passed through toupper() when shift was held. On AZERTY that can
+// never produce a digit: SDL reports the number row as digits only when the
+// key is *not* shifted, so shift plus that key came back as the digit again
+// and toupper() left it alone. Shift, AltGr and dead keys are now resolved by
+// the operating system before the character gets here.
+//
+// The font range check below is unchanged, and is what keeps a save name to
+// glyphs the menu font can actually draw.
+//
+
+static void M_InputChar(unsigned char ch) {
+	if (inputCharIndex >= inputMax) {
+		return;
+	}
+
+	if (ch != 32) {
+		if (((int)ch - ST_FONTSTART) < 0 ||
+			((int)ch - ST_FONTSTART) >= ('z' - ST_FONTSTART + 1)) {
+			return;
+		}
+	}
+
+	if (inputCharIndex < (MENUSTRINGSIZE - 1) &&
+		M_StringWidth(inputString) < (MENUSTRINGSIZE - 2) * 8) {
+		inputString[inputCharIndex++] = ch;
+		inputString[inputCharIndex] = 0;
+	}
 }
 
 //
@@ -4444,8 +4498,6 @@ static void M_DrawSaveGameFrontend(menu_t* def) {
 // M_Responder
 //
 
-static boolean shiftdown = false;
-
 boolean M_Responder(event_t* ev) {
 	int ch;
 	int i;
@@ -4454,6 +4506,21 @@ boolean M_Responder(event_t* ev) {
 
 	if (menufadefunc || !allowmenu || demoplayback) {
 		return false;
+	}
+
+	//
+	// [styd] typed text for the save name and player name fields. Only ever
+	// posted while such a field is open, but the state is checked anyway so
+	// an event still queued from the frame the field was closed cannot type
+	// into nothing.
+	//
+	if (ev->type == ev_text) {
+		if (!inputEnter) {
+			return false;
+		}
+
+		M_InputChar((unsigned char)ev->data1);
+		return true;
 	}
 
 	if (ev->type == ev_mousedown) {
@@ -4470,16 +4537,11 @@ boolean M_Responder(event_t* ev) {
 	}
 	else if (ev->type == ev_keydown) {
 		ch = ev->data1;
-
-		if (ch == KEY_SHIFT) {
-			shiftdown = true;
-		}
 	}
 	else if (ev->type == ev_keyup) {
 		thermowait = 0;
 		if (ev->data1 == KEY_SHIFT) {
 			ch = ev->data1;
-			shiftdown = false;
 		}
 	}
 	else if (ev->type == ev_mouse && (ev->data2 != 0.0 || ev->data3 != 0.0)) {
@@ -4620,12 +4682,12 @@ boolean M_Responder(event_t* ev) {
 			break;
 
 		case KEY_ESCAPE:
-			inputEnter = false;
+			M_StopInputString();
 			dstrcpy(inputString, oldInputString);
 			break;
 
 		case KEY_ENTER:
-			inputEnter = false;
+			M_StopInputString();
 			if (currentMenu == &NetworkDef) {
 				CON_CvarSet(m_playername.name, inputString);
 				if (netgame) {
@@ -4641,28 +4703,10 @@ boolean M_Responder(event_t* ev) {
 			break;
 
 		default:
-
-			if (inputCharIndex >= inputMax) {
-				return true;
-			}
-
-			if (shiftdown) {
-				ch = toupper(ch);
-			}
-
-			if (ch != 32) {
-				if (ch - ST_FONTSTART < 0 || ch - ST_FONTSTART >= ('z' - ST_FONTSTART + 1)) {
-					break;
-				}
-			}
-
-			if (ch >= 32 && ch <= 127) {
-				if (inputCharIndex < (MENUSTRINGSIZE - 1) &&
-					M_StringWidth(inputString) < (MENUSTRINGSIZE - 2) * 8) {
-					inputString[inputCharIndex++] = ch;
-					inputString[inputCharIndex] = 0;
-				}
-			}
+			//
+			// [styd] printable characters arrive as ev_text now and are
+			// handled by M_InputChar, above.
+			//
 			break;
 		}
 		return true;
@@ -5318,6 +5362,9 @@ void M_ClearMenus(void) {
 		return;
 	}
 
+	// [styd] the menu can be closed with a text field still open
+	M_StopInputString();
+
 	// center mouse before clearing menu
 	// so the input code won't try to
 	// re-center the mouse; which can
@@ -5542,7 +5589,6 @@ void M_Init(void) {
 	NewDef.prevMenu = &MainDef;
 
 	M_InitEpisodes();
-	M_InitShiftXForm();
 }
 
 //

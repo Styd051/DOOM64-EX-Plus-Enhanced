@@ -42,6 +42,16 @@ void I_GetEvent(SDL_Event* Event);
 void I_ReadMouse(void);
 void I_InitInputs(void);
 
+//
+// [styd] text entry.
+//
+// Only switched on while a text field is actually open, because an active
+// text input target can raise an IME candidate window or an on screen
+// keyboard on some platforms, which has no business appearing during play.
+//
+void I_StartTextInput(void);
+void I_StopTextInput(void);
+
 void I_StartTic(void);
 void I_FinishUpdate(void);
 int I_ShutdownWait(void);

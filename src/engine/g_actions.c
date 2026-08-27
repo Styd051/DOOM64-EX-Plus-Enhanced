@@ -431,6 +431,13 @@ boolean G_ActionResponder(event_t* ev) {
 		//
 	case ev_gamepad:
 		break;
+
+		//
+		// [styd] typed text belongs to the console and the menu's text
+		// fields, never to a bound action.
+		//
+	case ev_text:
+		break;
 	}
 
 	return false;

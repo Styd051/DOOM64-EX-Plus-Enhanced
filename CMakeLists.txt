@@ -85,7 +85,6 @@ add_executable(
 	${SOURCE_DIR}/m_keys.c
 	${SOURCE_DIR}/m_password.c
 	${SOURCE_DIR}/m_random.c
-	${SOURCE_DIR}/m_shift.c
 	${SOURCE_DIR}/net_client.c
 	${SOURCE_DIR}/net_common.c
 	${SOURCE_DIR}/net_io.c

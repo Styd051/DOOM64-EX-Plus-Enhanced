@@ -204,7 +204,6 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
     <ClCompile Include="..\src\engine\m_misc.c" />
     <ClCompile Include="..\src\engine\m_password.c" />
     <ClCompile Include="..\src\engine\m_random.c" />
-    <ClCompile Include="..\src\engine\m_shift.c" />
     <ClCompile Include="..\src\engine\net_client.c" />
     <ClCompile Include="..\src\engine\net_common.c" />
     <ClCompile Include="..\src\engine\net_io.c" />
@@ -301,7 +300,6 @@ copy ..\doom64ex-plus-enhanced.wad $(OutputPath)</Command>
     <ClInclude Include="..\src\engine\m_misc.h" />
     <ClInclude Include="..\src\engine\m_password.h" />
     <ClInclude Include="..\src\engine\m_random.h" />
-    <ClInclude Include="..\src\engine\m_shift.h" />
     <ClInclude Include="..\src\engine\net_client.h" />
     <ClInclude Include="..\src\engine\net_common.h" />
     <ClInclude Include="..\src\engine\net_defs.h" />

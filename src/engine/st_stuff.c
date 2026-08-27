@@ -36,7 +36,7 @@
 #include "doomstat.h"
 #include "d_englsh.h"
 #include "sounds.h"
-#include "m_shift.h"
+#include "i_sdlinput.h"
 #include "con_console.h"
 #include "am_map.h"
 #include "gl_texture.h"
@@ -1336,11 +1336,21 @@ char ST_DequeueChatChar(void) {
 // ST_FeedChatMsg
 //
 
-static boolean st_shiftOn = false;
 static void ST_FeedChatMsg(event_t* ev) {
 	int c;
 
 	if (!st_chatOn) {
+		return;
+	}
+
+	//
+	// [styd] typed text, straight from the player's keyboard layout. This
+	// used to be built here from a raw key code and english_shiftxform, a
+	// hardcoded QWERTY table that returned the wrong symbol on any other
+	// layout and could not reach an AltGr character at all.
+	//
+	if (ev->type == ev_text) {
+		ST_QueueChatChar((char)ev->data1);
 		return;
 	}
 
@@ -1355,6 +1365,7 @@ static void ST_FeedChatMsg(event_t* ev) {
 	case KEY_KEYPADENTER:
 		ST_QueueChatChar((char)c);
 		st_chatOn = false;
+		I_StopTextInput();
 		break;
 	case KEY_BACKSPACE:
 		if (ev->type != ev_keydown) {
@@ -1365,16 +1376,10 @@ static void ST_FeedChatMsg(event_t* ev) {
 	case KEY_ESCAPE:
 		len = dstrlen(st_chatstring[consoleplayer]);
 		st_chatOn = false;
+		I_StopTextInput();
 		dmemset(st_chatstring[consoleplayer], 0, len);
 		break;
 	case KEY_SHIFT:
-		if (ev->type == ev_keydown) {
-			st_shiftOn = true;
-		}
-		else if (ev->type == ev_keyup) {
-			st_shiftOn = false;
-		}
-		break;
 	case KEY_ALT:
 	case KEY_PAUSE:
 	case KEY_TAB:
@@ -1404,14 +1409,10 @@ static void ST_FeedChatMsg(event_t* ev) {
 	case KEY_NUMLOCK:
 		break; // too lazy to do anything clever here..
 	default:
-		if (ev->type != ev_keydown) {
-			return;
-		}
-
-		if (st_shiftOn) {
-			c = shiftxform[c];
-		}
-		ST_QueueChatChar((char)c);
+		//
+		// [styd] printable characters arrive as ev_text now, handled at the
+		// top of this function.
+		//
 		break;
 	}
 }
@@ -1470,6 +1471,9 @@ boolean ST_Responder(event_t* ev) {
 
 		if (ev->type == ev_keydown && ev->data1 == 't') {
 			st_chatOn = true;
+
+			// [styd] from here on SDL reports the characters typed
+			I_StartTextInput();
 		}
 	}
 

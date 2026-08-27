@@ -43,6 +43,16 @@ typedef enum {
     ev_gamepad,
     ev_gamepaddown,
     ev_gamepadup,
+
+    //
+    // [styd] one printable character, as produced by the player's actual
+    // keyboard layout. data1 holds the ASCII code.
+    //
+    // Posted by i_sdlinput.c from SDL_EVENT_TEXT_INPUT, where shift, AltGr,
+    // caps lock and dead keys have already been resolved by the operating
+    // system. Added last on purpose so the existing type numbers do not move.
+    //
+    ev_text,
 } evtype_t;
 
 // Event structure.

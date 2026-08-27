@@ -1114,6 +1114,46 @@ boolean I_UpdateGrab(void) {
 }
 
 //
+// I_StartTextInput / I_StopTextInput
+//
+// [styd] While text input is on, SDL reports SDL_EVENT_TEXT_INPUT events
+// carrying the characters the player's keyboard layout actually produces.
+//
+// This is what makes the console usable outside a US layout. The engine used
+// to build characters itself, from a raw key code plus a hardcoded QWERTY
+// shift table (english_shiftxform in m_shift.c). On AZERTY or QWERTZ that
+// table returns the wrong symbol for every shifted key, and it has no way at
+// all of producing a character that needs AltGr - @ \ | [ ] { } and ~ are
+// simply unreachable.
+//
+// The flag is kept locally rather than asking SDL, so that a window that was
+// destroyed and rebuilt underneath us cannot leave the two out of step.
+//
+
+static boolean text_input_on = false;
+
+void I_StartTextInput(void) {
+	if (text_input_on || !window) {
+		return;
+	}
+
+	SDL_StartTextInput(window);
+	text_input_on = true;
+}
+
+void I_StopTextInput(void) {
+	if (!text_input_on) {
+		return;
+	}
+
+	if (window) {
+		SDL_StopTextInput(window);
+	}
+
+	text_input_on = false;
+}
+
+//
 // I_GetEvent
 //
 
@@ -1143,6 +1183,46 @@ void I_GetEvent(SDL_Event* Event) {
 			D_PostEvent(&event);
 		}
 		break;
+
+	case SDL_EVENT_TEXT_INPUT:
+	{
+		//
+		// [styd] SDL hands us a UTF-8 string, which can hold more than one
+		// character when a dead key resolves or an IME commits. The console
+		// font is ASCII only, so anything outside printable ASCII is dropped
+		// rather than mangled into a stray glyph. Every byte of a multi byte
+		// UTF-8 sequence has its high bit set, so this rejects them whole.
+		//
+		const char* t = Event->text.text;
+
+		if (!t) {
+			break;
+		}
+
+		for (; *t; t++) {
+			unsigned char c = (unsigned char)*t;
+
+			if (c < 32 || c > 126) {
+				continue;
+			}
+
+			//
+			// The key that opens the console must never type into it. On a
+			// US layout that key produces a backquote, which is printable.
+			//
+			if (c == KEY_CONSOLE) {
+				continue;
+			}
+
+			event.type = ev_text;
+			event.data1 = c;
+			event.data2 = event.data3 = 0;
+			event.data4 = 0;
+
+			D_PostEvent(&event);
+		}
+	}
+	break;
 
 	case SDL_EVENT_MOUSE_BUTTON_DOWN:
 	case SDL_EVENT_MOUSE_BUTTON_UP:

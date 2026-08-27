@@ -28,7 +28,7 @@
 #include "z_zone.h"
 #include "st_stuff.h"
 #include "g_actions.h"
-#include "m_shift.h"
+#include "i_sdlinput.h"
 #include "gl_draw.h"
 #include "i_system.h"
 #include "dgl.h"
@@ -241,33 +241,57 @@ void CON_DPrintf(const char* s, ...) {
 }
 
 //
-// CON_ParseKey
+// CON_ResetCaret
+//
+// [styd] restarts the caret's blink phase, so that it is solid at the instant
+// the line changes.
 //
 
-static boolean shiftdown = false;
+static int caret_basetime = 0;
 
-void CON_ParseKey(unsigned char c) {
-	if (c < KEY_SPACEBAR || c > KEY_BACKSPACE) {
-		return;
+static void CON_ResetCaret(void) {
+	caret_basetime = I_GetTimeMS();
+}
+
+//
+// CON_Backspace
+//
+
+static void CON_Backspace(void) {
+	CON_ResetCaret();
+
+	if (console_inputlength > 1) {
+		console_inputbuffer[--console_inputlength] = 0;
 	}
+}
 
-	if (c == KEY_BACKSPACE) {
-		if (console_inputlength > 1) {
-			console_inputbuffer[--console_inputlength] = 0;
-		}
+//
+// CON_InsertChar
+//
+// [styd] Takes one printable character straight from the keyboard layout, by
+// way of ev_text.
+//
+// This used to run the raw key code through english_shiftxform when shift was
+// held. That table describes a US keyboard, so on AZERTY every shifted key
+// produced the wrong symbol, and a character needing AltGr could not be typed
+// at all. The operating system has already applied shift, AltGr, caps lock
+// and any dead key by the time the character reaches here, so there is
+// nothing left to transform.
+//
 
+static void CON_InsertChar(unsigned char c) {
+	if (c < 32 || c > 126) {
 		return;
-	}
-
-	if (shiftdown) {
-		c = shiftxform[c];
 	}
 
 	if (console_inputlength >= MAX_CONSOLE_INPUT_LEN - 2) {
-		console_inputlength = MAX_CONSOLE_INPUT_LEN - 2;
+		return;
 	}
 
 	console_inputbuffer[console_inputlength++] = c;
+	console_inputbuffer[console_inputlength] = 0;
+
+	CON_ResetCaret();
 }
 
 //
@@ -284,14 +308,23 @@ void CON_Ticker(void) {
 		return;
 	}
 
-	if (keyheld && ((gametic - ticpressed) >= 15)) {
-		CON_ParseKey(lastkey);
+	//
+	// [styd] only backspace repeats from here now. Printable characters
+	// arrive as ev_text, and SDL already repeats those at whatever rate the
+	// operating system is set to.
+	//
+	if (keyheld && (lastkey == KEY_BACKSPACE) &&
+		((gametic - ticpressed) >= 15)) {
+		CON_Backspace();
 	}
 }
 
 void CON_dismiss(void) {
 	console_state = CST_UP;
 	console_enabled = false;
+
+	// [styd] stop asking SDL for text, so no IME can appear during play
+	I_StopTextInput();
 }
 
 //
@@ -303,6 +336,21 @@ void G_ClearInput(void);
 boolean CON_Responder(event_t* ev) {
 	int c;
 	boolean clearheld = true;
+
+	//
+	// [styd] a printable character from the player's keyboard layout.
+	// Only ever posted while the console is down, but the state is checked
+	// anyway so that an event still queued from the frame the console was
+	// dismissed cannot type into a closed console.
+	//
+	if (ev->type == ev_text) {
+		if ((console_state != CST_DOWN) && (console_state != CST_LOWER)) {
+			return false;
+		}
+
+		CON_InsertChar((unsigned char)ev->data1);
+		return true;
+	}
 
 	if ((ev->type != ev_keyup) && (ev->type != ev_keydown)) {
 		return false;
@@ -321,19 +369,13 @@ boolean CON_Responder(event_t* ev) {
 		ticpressed = 0;
 	}
 
-	if (c == KEY_SHIFT) {
-		if (ev->type == ev_keydown) {
-			shiftdown = true;
-		}
-		else if (ev->type == ev_keyup) {
-			shiftdown = false;
-		}
-	}
-
 	switch (console_state) {
 	case CST_DOWN:
 	case CST_LOWER:
 		if (ev->type == ev_keydown) {
+			// [styd] any activity makes the caret solid again
+			CON_ResetCaret();
+
 			switch (c) {
 			case KEY_CONSOLE:
 				CON_dismiss();
@@ -416,13 +458,18 @@ boolean CON_Responder(event_t* ev) {
 				}
 				break;
 
-			default:
-				if (c == KEY_SHIFT || c == KEY_ALT || c == KEY_CTRL) {
-					break;
-				}
-
+			case KEY_BACKSPACE:
+				// held backspace keeps deleting, via CON_Ticker
 				clearheld = false;
-				CON_ParseKey(c);
+				CON_Backspace();
+				break;
+
+			default:
+				//
+				// [styd] printable characters no longer come through here.
+				// They arrive as ev_text, already resolved by the keyboard
+				// layout. Anything else is simply not a console key.
+				//
 				break;
 			}
 
@@ -440,6 +487,11 @@ boolean CON_Responder(event_t* ev) {
 				console_state = CST_DOWN;
 				console_enabled = true;
 				G_ClearInput();
+
+				CON_ResetCaret();
+
+				// [styd] from here on SDL reports typed characters
+				I_StartTextInput();
 			}
 			return false;
 		}
@@ -456,6 +508,11 @@ boolean CON_Responder(event_t* ev) {
 #define CONFONT_SCALE   ((display_scale * SCREENHEIGHT) / video_height)
 
 #define CONFONT_YPAD    (16 * CONFONT_SCALE)
+
+//
+// [styd] half period of the caret blink, in milliseconds.
+//
+#define CONSOLE_CARET_MS    500
 
 void CON_Draw(void) {
 	int     line;
@@ -506,7 +563,21 @@ void CON_Draw(void) {
 	y = CONSOLE_Y + CONFONT_YPAD;
 
 	inputlen = Draw_ConsoleText(x, y, WHITE, CONFONT_SCALE, "%s", console_inputbuffer);
-	Draw_ConsoleText(x + inputlen, y, WHITE, CONFONT_SCALE, "_");
+
+	//
+	// [styd] blinking caret.
+	//
+	// Driven by the wall clock rather than by gametic, so that it blinks at
+	// the same rate whatever the frame rate is and keeps going while the game
+	// is paused or sitting on the title screen.
+	//
+	// The phase is reset by CON_ResetCaret whenever the line changes, so the
+	// caret is always solid at the moment you type rather than possibly
+	// blinking out just as a character lands.
+	//
+	if ((((I_GetTimeMS() - caret_basetime) / CONSOLE_CARET_MS) & 1) == 0) {
+		Draw_ConsoleText(x + inputlen, y, WHITE, CONFONT_SCALE, "_");
+	}
 
 	I_ShaderBind();
 }
