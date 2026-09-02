@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <float.h>
+#include <stdbool.h>
 
 #include <fmod.h>
 #include <fmod_errors.h>
@@ -103,6 +104,7 @@ static SDL_Mutex* lock = NULL;
 
 // 20120205 villsa - bool to determine if sequencer is ready or not
 static int seqready = 0;
+static int audio_shutting_down = 0;
 
 //
 // DEFINES
@@ -264,7 +266,7 @@ typedef void(*eventhandler)(doomseq_t*, channel_t*);
 typedef int(*signalhandler)(doomseq_t*);
 
 static void FMOD_ERROR_CHECK(FMOD_RESULT result) {
-    if (result != FMOD_OK) {
+    if (result != FMOD_OK && result != FMOD_ERR_INVALID_HANDLE) {
         fprintf(stderr, "FMOD Studio: %s\n", FMOD_ErrorString(result));
         // useful for crashing as soon as there is an fmod error
         //
@@ -431,7 +433,7 @@ static void Song_ClearPlaylist(void) {
     int i;
 
     for (i = 0; i < MIDI_CHANNELS; i++) {
-        dmemset(&playlist[i], 0, sizeof(song_t));
+        dmemset(&playlist[i], 0, sizeof(channel_t));
 
         playlist[i].id = i;
         playlist[i].state = CHAN_STATE_READY;
@@ -1087,7 +1089,7 @@ static int Seq_RegisterSounds(void) {
                 result = FMOD_System_CreateSound(
                     sound.fmod_studio_system,
                     (const char*)p,
-                    FMOD_OPENMEMORY_POINT | mode,
+                    FMOD_OPENMEMORY | mode,
                     &exinfo,
                     &snd
                 );
@@ -1234,6 +1236,7 @@ static int SDLCALL Thread_PlayerHandler(void* param) {
 
 
 void I_InitSequencer(void) {
+    audio_shutting_down = 0;
     I_Printf("Audio Engine: FMOD Studio by Firelight Technologies Pty Ltd.\n");
 
     FMOD_ERROR_CHECK(FMOD_System_Create(&sound.fmod_studio_system, FMOD_VERSION));
@@ -1322,6 +1325,7 @@ void I_InitSequencer(void) {
 
 
 void I_Update(void) {
+    if (audio_shutting_down) return;
     if(sound.fmod_studio_system) {
         FMOD_ERROR_CHECK(FMOD_System_Update(sound.fmod_studio_system));
     }
@@ -1399,22 +1403,45 @@ static void ShutdownSystem(FMOD_SYSTEM **system) {
 
 void I_ShutdownSound(void)
 {
-    // wait for seq thread to terminate
+    if (audio_shutting_down) {
+        return;
+    }
+
+    audio_shutting_down = 1;
+    seqready = 0;
+
+    // Terminate the legacy sequencer first.
     Seq_Shutdown(&doomseq);
 
-    for(int i = 0 ; i < num_sfx ; i++) {
-        ReleaseSound(&sound.fmod_studio_sound[i]);
+    // Stop every channel attached to each FMOD system before releasing the
+    // sounds and systems. This is the lifetime barrier that the old code was
+    // missing for normal SFX channels.
+    if (sound.master) {
+        FMOD_ERROR_CHECK(FMOD_ChannelGroup_Stop(sound.master));
     }
-    
+    if (sound.master_music) {
+        FMOD_ERROR_CHECK(FMOD_ChannelGroup_Stop(sound.master_music));
+    }
+
     StopChannel(&sound.fmod_studio_channel_music);
     StopChannel(&sound.fmod_studio_channel_loop);
     StopChannel(&sound.fmod_studio_channel_plasma_loop);
 
-    // must be done after stopping fmod_studio_channel_music
     ReleaseSound(&currentMidiSound);
+
+    for (int i = 0; i < num_sfx && i < MAX_GAME_SFX; ++i) {
+        ReleaseSound(&sound.fmod_studio_sound[i]);
+    }
 
     ShutdownSystem(&sound.fmod_studio_system);
     ShutdownSystem(&sound.fmod_studio_system_music);
+
+    sound.master = NULL;
+    sound.master_music = NULL;
+    sound.fmod_studio_channel_music = NULL;
+    sound.fmod_studio_channel_loop = NULL;
+    sound.fmod_studio_channel_plasma_loop = NULL;
+    currentMidiSound = NULL;
 }
 
 //
@@ -1501,6 +1528,7 @@ void I_SetGain(float db) {
 //
 
 void I_UpdateListenerPosition(fixed_t player_world_x, fixed_t player_world_y_depth, fixed_t player_eye_world_z_height, angle_t view_angle) {
+    if (audio_shutting_down) return;
     if (!sound.fmod_studio_system) {
         return;
     }
@@ -1526,60 +1554,19 @@ void I_UpdateListenerPosition(fixed_t player_world_x, fixed_t player_world_y_dep
 int FMOD_StartSound(int sfx_id, sndsrc_t* origin, int volume, int pan) {
     FMOD_CHANNEL* sfx_channel = NULL;
     FMOD_RESULT result;
+    float instance_vol;
+    float global_sfx_vol;
+    float final_volume;
+    int force_2d = 0;
 
-    if (!seqready || !sound.fmod_studio_system) {
+    if (audio_shutting_down || !seqready || !sound.fmod_studio_system) {
         return -1;
     }
 
-    if (sfx_id < 0 || sfx_id >= num_sfx || !sound.fmod_studio_sound[sfx_id]) {
+    if (sfx_id < 0 || sfx_id >= num_sfx || sfx_id >= MAX_GAME_SFX || !sound.fmod_studio_sound[sfx_id]) {
         CON_Warnf("FMOD_StartSound: Invalid sfx_id %d or sound not loaded (num_sfx: %d)\n", sfx_id, num_sfx);
         return -1;
     }
-
-    result = FMOD_System_PlaySound(sound.fmod_studio_system, sound.fmod_studio_sound[sfx_id], sound.master, true, &sfx_channel);
-    if (result != FMOD_OK) {
-        FMOD_ERROR_CHECK(result);
-        return -1;
-    }
-
-    if(!sfx_channel) {
-        CON_Warnf("FMOD_StartSound: PlaySound OK (default path) but channel is NULL (sfx_id %d)\n", sfx_id);
-        return -1;
-    }
-
-    float instance_vol = (float)volume / 255.0f;
-    float global_sfx_vol = (s_sfxvol.value >= 0 && s_sfxvol.value <= 255) ? (float)s_sfxvol.value / 255.0f : 1.0f;
-    float final_volume = instance_vol * global_sfx_vol;
-    if (isnan(final_volume) || isinf(final_volume)) final_volume = 0.75f;
-    if (final_volume < 0.0f) final_volume = 0.0f;
-    
-    // Clamp to a maximum of 1.0 to prevent clipping (1.0f is really loud for FMOD)
-    if (final_volume > 1.0f) {
-        final_volume = 1.0f;
-    }
-    FMOD_ERROR_CHECK(FMOD_Channel_SetVolume(sfx_channel, final_volume));
-
-    if (origin) {
-        mobj_t* mobj = (mobj_t*)origin;
-        FMOD_VECTOR pos, vel;
-        
-        pos.x = (float)mobj->x / FRACUNIT * INCHES_PER_METER;
-        pos.y = (float)mobj->z / FRACUNIT * INCHES_PER_METER;
-        pos.z = (float)mobj->y / FRACUNIT * INCHES_PER_METER;
-        
-        vel.x = 0.0f; vel.y = 0.0f; vel.z = 0.0f;
-        
-        FMOD_ERROR_CHECK(FMOD_Channel_Set3DAttributes(sfx_channel, &pos, &vel));
-        FMOD_ERROR_CHECK(FMOD_Channel_SetMode(sfx_channel, FMOD_3D_WORLDRELATIVE));
-    } else {
-        float fmod_pan = ((float)pan - 128.0f) / 128.0f;
-        if (isnan(fmod_pan) || isinf(fmod_pan)) fmod_pan = 0.0f;
-        fmod_pan = (fmod_pan < -1.0f) ? -1.0f : (fmod_pan > 1.0f) ? 1.0f : fmod_pan;
-        FMOD_ERROR_CHECK(FMOD_Channel_SetPan(sfx_channel, fmod_pan));
-        FMOD_ERROR_CHECK(FMOD_Channel_SetMode(sfx_channel, FMOD_2D));
-    }
-    
-    FMOD_ERROR_CHECK(FMOD_Channel_SetPaused(sfx_channel, false));
 
     if (origin) {
         float distance = I_Audio_CalculateDistanceToListener((mobj_t*)origin);
@@ -1588,43 +1575,65 @@ int FMOD_StartSound(int sfx_id, sndsrc_t* origin, int volume, int pan) {
             return -1;
         }
 
-        if (distance <= GAME_SFX_FORCED_FULL_VOL_UNITS_THRESHOLD) {
-            result = FMOD_System_PlaySound(sound.fmod_studio_system, sound.fmod_studio_sound[sfx_id], sound.master, true, &sfx_channel);
-
-            if (result != FMOD_OK) {
-                FMOD_ERROR_CHECK(result);
-                return -1;
-            }
-
-            if (sfx_channel) {
-                float instance_vol = (float)volume / 255.0f;
-                float global_sfx_vol = (s_sfxvol.value >= 0 && s_sfxvol.value <= 255) ? (float)s_sfxvol.value / 255.0f : 1.0f;
-                float final_volume = instance_vol * global_sfx_vol;
-                if (isnan(final_volume) || isinf(final_volume)) final_volume = 0.75f;
-                if (final_volume < 0.0f) final_volume = 0.0f;
-
-                // Clamp to a maximum of 1.0 to prevent clipping (same reason)
-                if (final_volume > 1.0f) {
-                    final_volume = 1.0f;
-                }
-                FMOD_ERROR_CHECK(FMOD_Channel_SetVolume(sfx_channel, final_volume));
-                FMOD_ERROR_CHECK(FMOD_Channel_SetPan(sfx_channel, 0.0f));
-                FMOD_ERROR_CHECK(FMOD_Channel_SetMode(sfx_channel, FMOD_2D));
-                FMOD_ERROR_CHECK(FMOD_Channel_SetPaused(sfx_channel, false));
-                return sfx_id;
-            }
-
-            CON_Warnf("FMOD_StartSound: PlaySound OK (2D override) but channel is NULL (sfx_id %d)\n", sfx_id);
-            return -1;
-        }
+        force_2d = (distance <= GAME_SFX_FORCED_FULL_VOL_UNITS_THRESHOLD);
     }
+
+    instance_vol = (float)volume / 255.0f;
+    global_sfx_vol = (s_sfxvol.value >= 0 && s_sfxvol.value <= 255)
+        ? (float)s_sfxvol.value / 255.0f : 1.0f;
+    final_volume = instance_vol * global_sfx_vol;
+
+    if (isnan(final_volume) || isinf(final_volume)) final_volume = 0.75f;
+    if (final_volume < 0.0f) final_volume = 0.0f;
+    if (final_volume > 1.0f) final_volume = 1.0f;
+
+    result = FMOD_System_PlaySound(
+        sound.fmod_studio_system,
+        sound.fmod_studio_sound[sfx_id],
+        sound.master,
+        true,
+        &sfx_channel);
+
+    if (result != FMOD_OK || !sfx_channel) {
+        FMOD_ERROR_CHECK(result);
+        return -1;
+    }
+
+    FMOD_ERROR_CHECK(FMOD_Channel_SetVolume(sfx_channel, final_volume));
+
+    if (origin && !force_2d) {
+        mobj_t* mobj = (mobj_t*)origin;
+        FMOD_VECTOR pos, vel;
+
+        pos.x = (float)mobj->x / FRACUNIT * INCHES_PER_METER;
+        pos.y = (float)mobj->z / FRACUNIT * INCHES_PER_METER;
+        pos.z = (float)mobj->y / FRACUNIT * INCHES_PER_METER;
+
+        vel.x = 0.0f;
+        vel.y = 0.0f;
+        vel.z = 0.0f;
+
+        FMOD_ERROR_CHECK(FMOD_Channel_Set3DAttributes(sfx_channel, &pos, &vel));
+        FMOD_ERROR_CHECK(FMOD_Channel_SetMode(sfx_channel, FMOD_3D_WORLDRELATIVE));
+    } else {
+        float fmod_pan = ((float)pan - 128.0f) / 128.0f;
+
+        if (isnan(fmod_pan) || isinf(fmod_pan)) fmod_pan = 0.0f;
+        fmod_pan = (fmod_pan < -1.0f) ? -1.0f : (fmod_pan > 1.0f) ? 1.0f : fmod_pan;
+        if (force_2d) fmod_pan = 0.0f;
+
+        FMOD_ERROR_CHECK(FMOD_Channel_SetPan(sfx_channel, fmod_pan));
+        FMOD_ERROR_CHECK(FMOD_Channel_SetMode(sfx_channel, FMOD_2D));
+    }
+
+    FMOD_ERROR_CHECK(FMOD_Channel_SetPaused(sfx_channel, false));
     return sfx_id;
 }
 
 int FMOD_StartSFXLoop(int sfx_id, int volume) {
     StopChannel(&sound.fmod_studio_channel_loop);
 
-    if (!seqready || !sound.fmod_studio_system) {
+    if (audio_shutting_down || !seqready || !sound.fmod_studio_system) {
         return -1;
     }
     
@@ -1676,7 +1685,7 @@ int FMOD_StopSFXLoop(void) {
 int FMOD_StartPlasmaLoop(int sfx_id, int volume) {
     FMOD_StopPlasmaLoop();
 
-    if (!seqready || !sound.fmod_studio_system) {
+    if (audio_shutting_down || !seqready || !sound.fmod_studio_system) {
         return -1;
     }
 
@@ -1712,6 +1721,10 @@ void FMOD_StopSound(sndsrc_t* origin, int sfx_id) {
 
 int FMOD_StartMusic(int mus_id) {
     FMOD_RESULT result;
+
+    if (audio_shutting_down || !seqready || !sound.fmod_studio_system_music) {
+        return -1;
+    }
 
     StopChannel(&sound.fmod_studio_channel_music);
     ReleaseSound(&currentMidiSound);
